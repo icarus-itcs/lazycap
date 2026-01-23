@@ -1,4 +1,4 @@
-.PHONY: build install clean test lint run dev
+.PHONY: build install uninstall clean test lint run dev
 
 # Build variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -24,10 +24,19 @@ build:
 	@mkdir -p $(BINARY_DIR)
 	$(GOBUILD) $(LDFLAGS) -o $(BINARY_DIR)/$(BINARY_NAME) .
 
-# Install to GOPATH/bin
-install:
-	@echo "Installing $(BINARY_NAME)..."
-	$(GOBUILD) $(LDFLAGS) -o $(GOPATH)/bin/$(BINARY_NAME) .
+# Install to /usr/local/bin (standard Unix convention, requires sudo)
+PREFIX ?= /usr/local
+install: build
+	@echo "Installing $(BINARY_NAME) to $(PREFIX)/bin..."
+	@mkdir -p $(PREFIX)/bin
+	install -m 755 $(BINARY_DIR)/$(BINARY_NAME) $(PREFIX)/bin/$(BINARY_NAME)
+	@echo "✓ Installed! Run 'lazycap' to start."
+
+# Uninstall
+uninstall:
+	@echo "Uninstalling $(BINARY_NAME)..."
+	rm -f $(PREFIX)/bin/$(BINARY_NAME)
+	@echo "✓ Uninstalled."
 
 # Run the application
 run: build
@@ -98,7 +107,8 @@ release: build-all
 help:
 	@echo "Available targets:"
 	@echo "  build       - Build the binary"
-	@echo "  install     - Install to GOPATH/bin"
+	@echo "  install     - Install to /usr/local/bin"
+	@echo "  uninstall   - Remove from /usr/local/bin"
 	@echo "  run         - Build and run"
 	@echo "  dev         - Run with hot reload (requires air)"
 	@echo "  test        - Run tests"

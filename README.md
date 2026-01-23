@@ -58,10 +58,11 @@ cd lazycap
 make install
 ```
 
-### Using Homebrew (coming soon)
+### Using Homebrew
 
 ```bash
-brew install icarus-itcs/tap/lazycap
+brew tap icarus-itcs/lazycap https://github.com/icarus-itcs/lazycap
+brew install lazycap --HEAD
 ```
 
 ## Requirements
@@ -115,6 +116,9 @@ lazycap version
 
 # List available devices
 lazycap devices
+
+# Run as MCP server for AI assistant integration
+lazycap mcp
 ```
 
 ## Plugins
@@ -127,16 +131,46 @@ lazycap features a powerful plugin system for extending functionality. Plugins c
 
 Exposes lazycap functionality via the [Model Context Protocol](https://modelcontextprotocol.io/), allowing AI assistants like Claude to control your development environment.
 
-**Available Tools:**
-- `list_devices` — Get all available devices
-- `run_on_device` — Run app on a specific device
-- `run_web` — Start web development server
-- `sync` / `build` — Trigger Capacitor operations
-- `get_processes` / `get_logs` — Monitor running processes
-- `get_settings` / `set_setting` — Read and modify settings
-- And more...
+**Claude Code Integration:**
 
-**Configuration:**
+Add lazycap to your Claude Code MCP settings (`~/.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "lazycap": {
+      "command": "lazycap",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Or run lazycap in your Capacitor project directory with the working directory specified:
+
+```json
+{
+  "mcpServers": {
+    "lazycap": {
+      "command": "lazycap",
+      "args": ["mcp"],
+      "cwd": "/path/to/your/capacitor-project"
+    }
+  }
+}
+```
+
+**Available Tools:**
+- `list_devices` — Get all available devices and emulators
+- `run_on_device` — Run app on a specific device with optional live reload
+- `sync` — Sync web assets to native projects
+- `build` — Build the web assets
+- `open_ide` — Open Xcode or Android Studio
+- `get_project` — Get current Capacitor project info
+- `get_debug_actions` — List available debug/cleanup actions
+- `run_debug_action` — Execute a debug action
+
+**Plugin Configuration (for TUI mode):**
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `mode` | Server mode: `tcp` or `stdio` | `tcp` |

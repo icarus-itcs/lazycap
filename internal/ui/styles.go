@@ -23,28 +23,17 @@ var (
 	webColor     = lipgloss.Color("#F97316") // Orange for web
 )
 
-// CapacitorLogo returns the ASCII art Capacitor logo for welcome screen
+// CapacitorLogo returns the logo for welcome screen
 func CapacitorLogo() string {
-	boltStyle := lipgloss.NewStyle().Foreground(capBlue).Bold(true)
 	textStyle := lipgloss.NewStyle().Foreground(capLight).Bold(true)
 
-	// Lightning bolt ASCII art
 	lines := []string{
-		boltStyle.Render("    ██████████"),
-		boltStyle.Render("   ██████████"),
-		boltStyle.Render("  ██████████"),
-		boltStyle.Render(" ██████████"),
-		boltStyle.Render("████████████████"),
-		boltStyle.Render("    ██████████"),
-		boltStyle.Render("     ██████████"),
-		boltStyle.Render("      ██████████"),
-		boltStyle.Render("       █████████"),
 		"",
-		textStyle.Render("     lazycap"),
-		mutedStyle.Render(" Capacitor Dashboard"),
+		textStyle.Render("lazycap"),
+		mutedStyle.Render("Capacitor Dashboard"),
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	return lipgloss.JoinVertical(lipgloss.Center, lines...)
 }
 
 // LogoCompact returns a compact inline logo for the header

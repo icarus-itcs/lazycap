@@ -1,10 +1,10 @@
 package plugin
 
 import (
-	"lazycap/internal/cap"
-	"lazycap/internal/debug"
-	"lazycap/internal/device"
-	"lazycap/internal/settings"
+	"github.com/icarus-itcs/lazycap/internal/cap"
+	"github.com/icarus-itcs/lazycap/internal/debug"
+	"github.com/icarus-itcs/lazycap/internal/device"
+	"github.com/icarus-itcs/lazycap/internal/settings"
 )
 
 // Context provides plugins access to lazycap functionality

@@ -13,6 +13,7 @@ type Manager struct {
 	mu       sync.RWMutex
 	ctx      Context
 	enabled  map[string]bool
+	running  map[string]bool                   // tracks which plugins should auto-start (were running when app closed)
 	settings map[string]map[string]interface{} // pluginID -> key -> value
 	events   *EventBus
 	started  bool
@@ -22,6 +23,7 @@ type Manager struct {
 func NewManager() *Manager {
 	return &Manager{
 		enabled:  make(map[string]bool),
+		running:  make(map[string]bool),
 		settings: make(map[string]map[string]interface{}),
 		events:   NewEventBus(),
 	}
@@ -68,6 +70,7 @@ func (m *Manager) LoadConfig() error {
 
 	var config struct {
 		Enabled  map[string]bool                   `json:"enabled"`
+		Running  map[string]bool                   `json:"running"`
 		Settings map[string]map[string]interface{} `json:"settings"`
 	}
 
@@ -76,10 +79,14 @@ func (m *Manager) LoadConfig() error {
 	}
 
 	m.enabled = config.Enabled
+	m.running = config.Running
 	m.settings = config.Settings
 
 	if m.enabled == nil {
 		m.enabled = make(map[string]bool)
+	}
+	if m.running == nil {
+		m.running = make(map[string]bool)
 	}
 	if m.settings == nil {
 		m.settings = make(map[string]map[string]interface{})
@@ -93,9 +100,11 @@ func (m *Manager) SaveConfig() error {
 	m.mu.RLock()
 	config := struct {
 		Enabled  map[string]bool                   `json:"enabled"`
+		Running  map[string]bool                   `json:"running"`
 		Settings map[string]map[string]interface{} `json:"settings"`
 	}{
 		Enabled:  m.enabled,
+		Running:  m.running,
 		Settings: m.settings,
 	}
 	m.mu.RUnlock()
@@ -269,7 +278,7 @@ func (m *Manager) StartAll() error {
 	return nil
 }
 
-// StartAutoStart starts plugins that have auto-start enabled in their settings
+// StartAutoStart starts plugins that were running when the app was last closed
 func (m *Manager) StartAutoStart() {
 	m.mu.Lock()
 	m.started = true
@@ -280,9 +289,8 @@ func (m *Manager) StartAutoStart() {
 			continue
 		}
 
-		// Check if plugin has autoStart setting enabled
-		autoStart := m.GetPluginSetting(p.ID(), "autoStart")
-		if autoStart == true {
+		// Check if plugin was running when app was last closed
+		if m.WasRunning(p.ID()) {
 			if err := p.Start(); err != nil {
 				if m.ctx != nil {
 					m.ctx.LogError(p.ID(), fmt.Errorf("auto-start failed: %w", err))
@@ -293,6 +301,21 @@ func (m *Manager) StartAutoStart() {
 
 	// Emit app started event
 	m.events.Emit(EventAppStarted, nil)
+}
+
+// WasRunning returns true if the plugin was running when the app was last closed
+func (m *Manager) WasRunning(pluginID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.running[pluginID]
+}
+
+// SetRunning records whether a plugin is running (for persistence across app restarts)
+func (m *Manager) SetRunning(pluginID string, running bool) error {
+	m.mu.Lock()
+	m.running[pluginID] = running
+	m.mu.Unlock()
+	return m.SaveConfig()
 }
 
 // StopAll stops all running plugins

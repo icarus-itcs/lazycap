@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"lazycap/internal/device"
+	"github.com/icarus-itcs/lazycap/internal/device"
 )
 
 // UpgradeInfo contains information about available upgrades
@@ -54,15 +54,128 @@ func IsCapacitorProject() bool {
 	return false
 }
 
+// IsCapacitorProjectAt checks if a directory contains a Capacitor project
+func IsCapacitorProjectAt(dir string) bool {
+	configFiles := []string{
+		"capacitor.config.ts",
+		"capacitor.config.js",
+		"capacitor.config.json",
+	}
+
+	for _, f := range configFiles {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// DiscoverProjects finds all Capacitor projects in the current directory and subdirectories
+// It searches up to maxDepth levels deep (default 3)
+func DiscoverProjects(maxDepth int) ([]*Project, error) {
+	if maxDepth <= 0 {
+		maxDepth = 3
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	var projects []*Project
+	visited := make(map[string]bool)
+
+	// Check current directory first
+	if IsCapacitorProject() {
+		if p, err := LoadProject(); err == nil {
+			projects = append(projects, p)
+			visited[cwd] = true
+		}
+	}
+
+	// Search subdirectories
+	err = walkDirWithDepth(cwd, 0, maxDepth, func(path string, d os.DirEntry, depth int) error {
+		if !d.IsDir() {
+			return nil
+		}
+
+		// Skip common non-project directories
+		name := d.Name()
+		if name == "node_modules" || name == ".git" || name == "dist" ||
+			name == "build" || name == ".next" || name == ".nuxt" ||
+			name == "ios" || name == "android" || name == "vendor" {
+			return filepath.SkipDir
+		}
+
+		fullPath := path
+		if visited[fullPath] {
+			return nil
+		}
+
+		if IsCapacitorProjectAt(fullPath) {
+			if p, err := LoadProjectAt(fullPath); err == nil {
+				projects = append(projects, p)
+				visited[fullPath] = true
+				return filepath.SkipDir // Don't search inside found projects
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return projects, err // Return what we found even if walk had errors
+	}
+
+	return projects, nil
+}
+
+// walkDirWithDepth walks a directory tree with depth tracking
+func walkDirWithDepth(root string, currentDepth, maxDepth int, fn func(path string, d os.DirEntry, depth int) error) error {
+	if currentDepth > maxDepth {
+		return nil
+	}
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil // Ignore permission errors, etc.
+	}
+
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		if err := fn(path, entry, currentDepth); err != nil {
+			if err == filepath.SkipDir {
+				continue
+			}
+			return err
+		}
+
+		if entry.IsDir() && currentDepth < maxDepth {
+			walkDirWithDepth(path, currentDepth+1, maxDepth, fn)
+		}
+	}
+
+	return nil
+}
+
 // LoadProject loads the current Capacitor project configuration
 func LoadProject() (*Project, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get working directory: %w", err)
 	}
+	return LoadProjectAt(cwd)
+}
+
+// LoadProjectAt loads a Capacitor project configuration from a specific directory
+func LoadProjectAt(dir string) (*Project, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
 
 	project := &Project{
-		RootDir: cwd,
+		RootDir: absDir,
 	}
 
 	// Find and load config
@@ -73,7 +186,7 @@ func LoadProject() (*Project, error) {
 	}
 
 	for _, f := range configFiles {
-		path := filepath.Join(cwd, f)
+		path := filepath.Join(absDir, f)
 		if _, err := os.Stat(path); err == nil {
 			project.ConfigPath = path
 			break
@@ -81,11 +194,11 @@ func LoadProject() (*Project, error) {
 	}
 
 	if project.ConfigPath == "" {
-		return nil, fmt.Errorf("no capacitor config found")
+		return nil, fmt.Errorf("no capacitor config found in %s", absDir)
 	}
 
 	// Try to get config via Capacitor CLI (handles ts/js configs)
-	config, err := getCapacitorConfig()
+	config, err := getCapacitorConfigAt(absDir)
 	if err != nil {
 		// Fallback to reading JSON directly
 		if strings.HasSuffix(project.ConfigPath, ".json") {
@@ -108,16 +221,16 @@ func LoadProject() (*Project, error) {
 	}
 
 	// Check for platform directories
-	if _, err := os.Stat(filepath.Join(cwd, "android")); err == nil {
+	if _, err := os.Stat(filepath.Join(absDir, "android")); err == nil {
 		project.HasAndroid = true
 	}
-	if _, err := os.Stat(filepath.Join(cwd, "ios")); err == nil {
+	if _, err := os.Stat(filepath.Join(absDir, "ios")); err == nil {
 		project.HasIOS = true
 	}
 
 	// Default name if not set
 	if project.Name == "" {
-		project.Name = filepath.Base(cwd)
+		project.Name = filepath.Base(absDir)
 	}
 
 	return project, nil
@@ -126,6 +239,23 @@ func LoadProject() (*Project, error) {
 // getCapacitorConfig gets config using the Capacitor CLI
 func getCapacitorConfig() (*CapacitorConfig, error) {
 	cmd := exec.Command("npx", "cap", "config", "--json")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var config CapacitorConfig
+	if err := json.Unmarshal(output, &config); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+// getCapacitorConfigAt gets config using the Capacitor CLI from a specific directory
+func getCapacitorConfigAt(dir string) (*CapacitorConfig, error) {
+	cmd := exec.Command("npx", "cap", "config", "--json")
+	cmd.Dir = dir
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -327,12 +457,20 @@ func listIOSDevices() ([]device.Device, error) {
 
 // Run runs the app on a device
 func Run(deviceID string, platform string, liveReload bool) error {
+	return RunAt("", deviceID, platform, liveReload)
+}
+
+// RunAt runs the app on a device from a specific project directory
+func RunAt(projectDir string, deviceID string, platform string, liveReload bool) error {
 	args := []string{"cap", "run", platform, "--target", deviceID}
 	if liveReload {
-		args = append(args, "-l", "--external")
+		args = append(args, "-l")
 	}
 
 	cmd := exec.Command("npx", args...)
+	if projectDir != "" {
+		cmd.Dir = projectDir
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -340,12 +478,20 @@ func Run(deviceID string, platform string, liveReload bool) error {
 
 // Sync syncs web assets to native projects
 func Sync(platform string) error {
+	return SyncAt("", platform)
+}
+
+// SyncAt syncs web assets to native projects from a specific directory
+func SyncAt(projectDir string, platform string) error {
 	args := []string{"cap", "sync"}
 	if platform != "" {
 		args = append(args, platform)
 	}
 
 	cmd := exec.Command("npx", args...)
+	if projectDir != "" {
+		cmd.Dir = projectDir
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -353,6 +499,11 @@ func Sync(platform string) error {
 
 // Build builds the web assets
 func Build() error {
+	return BuildAt("")
+}
+
+// BuildAt builds the web assets from a specific directory
+func BuildAt(projectDir string) error {
 	// Try common build commands
 	buildCmds := [][]string{
 		{"npm", "run", "build"},
@@ -363,6 +514,9 @@ func Build() error {
 	for _, args := range buildCmds {
 		if _, err := exec.LookPath(args[0]); err == nil {
 			cmd := exec.Command(args[0], args[1:]...)
+			if projectDir != "" {
+				cmd.Dir = projectDir
+			}
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err == nil {
@@ -376,7 +530,15 @@ func Build() error {
 
 // Open opens the native project in the IDE
 func Open(platform string) error {
+	return OpenAt("", platform)
+}
+
+// OpenAt opens the native project in the IDE from a specific directory
+func OpenAt(projectDir string, platform string) error {
 	cmd := exec.Command("npx", "cap", "open", platform)
+	if projectDir != "" {
+		cmd.Dir = projectDir
+	}
 	return cmd.Run()
 }
 

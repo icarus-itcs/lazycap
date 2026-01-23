@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"lazycap/cmd/lazycap"
+	"github.com/icarus-itcs/lazycap/cmd/lazycap"
 )
 
 var (

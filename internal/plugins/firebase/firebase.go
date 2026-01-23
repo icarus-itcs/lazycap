@@ -10,15 +10,27 @@ import (
 	"strings"
 	"sync"
 
-	"lazycap/internal/plugin"
+	"github.com/icarus-itcs/lazycap/internal/plugin"
 )
 
 const (
 	PluginID      = "firebase-emulator"
 	PluginName    = "Firebase Emulator"
-	PluginVersion = "1.0.0"
+	PluginVersion = "1.1.0"
 	PluginAuthor  = "lazycap"
 )
+
+// Available Firebase emulator services
+var AvailableEmulators = []string{
+	"auth",
+	"firestore",
+	"database",
+	"functions",
+	"hosting",
+	"storage",
+	"pubsub",
+	"eventarc",
+}
 
 // EmulatorStatus represents the status of an emulator
 type EmulatorStatus struct {
@@ -39,18 +51,37 @@ type FirebasePlugin struct {
 	emulators    []EmulatorStatus
 	projectID    string
 	configPath   string
-	autoStart    bool
 	importPath   string
 	exportOnExit bool
+	exportPath   string
+	uiEnabled    bool
+	lastError    string
+
+	// Per-emulator enable settings
+	enabledEmulators map[string]bool
 }
 
 // New creates a new Firebase Emulator plugin instance
 func New() *FirebasePlugin {
+	// Default: enable common emulators
+	enabled := make(map[string]bool)
+	for _, emu := range AvailableEmulators {
+		// Enable common ones by default
+		switch emu {
+		case "auth", "firestore", "functions", "storage":
+			enabled[emu] = true
+		default:
+			enabled[emu] = false
+		}
+	}
+
 	return &FirebasePlugin{
-		stopCh:       make(chan struct{}),
-		outputCh:     make(chan string, 100),
-		autoStart:    false,
-		exportOnExit: true,
+		stopCh:           make(chan struct{}),
+		outputCh:         make(chan string, 100),
+		exportOnExit:     true,
+		exportPath:       ".firebase-export",
+		uiEnabled:        true,
+		enabledEmulators: enabled,
 	}
 }
 
@@ -76,14 +107,7 @@ func (p *FirebasePlugin) IsRunning() bool {
 }
 
 func (p *FirebasePlugin) GetSettings() []plugin.Setting {
-	return []plugin.Setting{
-		{
-			Key:         "autoStart",
-			Name:        "Auto Start",
-			Description: "Start emulators when lazycap starts",
-			Type:        "bool",
-			Default:     false,
-		},
+	settings := []plugin.Setting{
 		{
 			Key:         "importPath",
 			Name:        "Import Data Path",
@@ -108,11 +132,30 @@ func (p *FirebasePlugin) GetSettings() []plugin.Setting {
 		{
 			Key:         "uiEnabled",
 			Name:        "Enable Emulator UI",
-			Description: "Enable the Firebase Emulator UI",
+			Description: "Enable the Firebase Emulator UI (usually at localhost:4000)",
 			Type:        "bool",
 			Default:     true,
 		},
 	}
+
+	// Add per-emulator settings
+	for _, emu := range AvailableEmulators {
+		defaultEnabled := false
+		switch emu {
+		case "auth", "firestore", "functions", "storage":
+			defaultEnabled = true
+		}
+
+		settings = append(settings, plugin.Setting{
+			Key:         "emulator:" + emu,
+			Name:        strings.Title(emu) + " Emulator",
+			Description: fmt.Sprintf("Enable %s emulator", emu),
+			Type:        "bool",
+			Default:     defaultEnabled,
+		})
+	}
+
+	return settings
 }
 
 func (p *FirebasePlugin) OnSettingChange(key string, value interface{}) {
@@ -120,10 +163,6 @@ func (p *FirebasePlugin) OnSettingChange(key string, value interface{}) {
 	defer p.mu.Unlock()
 
 	switch key {
-	case "autoStart":
-		if b, ok := value.(bool); ok {
-			p.autoStart = b
-		}
 	case "importPath":
 		if s, ok := value.(string); ok {
 			p.importPath = s
@@ -131,6 +170,22 @@ func (p *FirebasePlugin) OnSettingChange(key string, value interface{}) {
 	case "exportOnExit":
 		if b, ok := value.(bool); ok {
 			p.exportOnExit = b
+		}
+	case "exportPath":
+		if s, ok := value.(string); ok {
+			p.exportPath = s
+		}
+	case "uiEnabled":
+		if b, ok := value.(bool); ok {
+			p.uiEnabled = b
+		}
+	default:
+		// Check for emulator:* settings
+		if strings.HasPrefix(key, "emulator:") {
+			emuName := strings.TrimPrefix(key, "emulator:")
+			if b, ok := value.(bool); ok {
+				p.enabledEmulators[emuName] = b
+			}
 		}
 	}
 }
@@ -140,6 +195,9 @@ func (p *FirebasePlugin) GetStatusLine() string {
 	defer p.mu.RUnlock()
 
 	if !p.running {
+		if p.lastError != "" {
+			return "Firebase: " + p.lastError
+		}
 		return ""
 	}
 
@@ -177,13 +235,9 @@ func (p *FirebasePlugin) Init(ctx plugin.Context) error {
 	defer p.mu.Unlock()
 
 	p.ctx = ctx
+	p.lastError = ""
 
 	// Load settings
-	if autoStart := ctx.GetPluginSetting(PluginID, "autoStart"); autoStart != nil {
-		if b, ok := autoStart.(bool); ok {
-			p.autoStart = b
-		}
-	}
 	if importPath := ctx.GetPluginSetting(PluginID, "importPath"); importPath != nil {
 		if s, ok := importPath.(string); ok {
 			p.importPath = s
@@ -192,6 +246,25 @@ func (p *FirebasePlugin) Init(ctx plugin.Context) error {
 	if exportOnExit := ctx.GetPluginSetting(PluginID, "exportOnExit"); exportOnExit != nil {
 		if b, ok := exportOnExit.(bool); ok {
 			p.exportOnExit = b
+		}
+	}
+	if exportPath := ctx.GetPluginSetting(PluginID, "exportPath"); exportPath != nil {
+		if s, ok := exportPath.(string); ok {
+			p.exportPath = s
+		}
+	}
+	if uiEnabled := ctx.GetPluginSetting(PluginID, "uiEnabled"); uiEnabled != nil {
+		if b, ok := uiEnabled.(bool); ok {
+			p.uiEnabled = b
+		}
+	}
+
+	// Load per-emulator settings
+	for _, emu := range AvailableEmulators {
+		if enabled := ctx.GetPluginSetting(PluginID, "emulator:"+emu); enabled != nil {
+			if b, ok := enabled.(bool); ok {
+				p.enabledEmulators[emu] = b
+			}
 		}
 	}
 
@@ -207,26 +280,47 @@ func (p *FirebasePlugin) Start() error {
 		p.mu.Unlock()
 		return nil
 	}
-
-	// Check if Firebase is configured
-	if p.configPath == "" {
+	if p.ctx == nil {
 		p.mu.Unlock()
-		return fmt.Errorf("no firebase.json found in project")
+		return fmt.Errorf("plugin not initialized - call Init() first")
+	}
+	p.lastError = ""
+	p.mu.Unlock()
+
+	// Check if firebase CLI is installed
+	if _, err := exec.LookPath("firebase"); err != nil {
+		p.mu.Lock()
+		p.lastError = "firebase CLI not found"
+		p.mu.Unlock()
+		return fmt.Errorf("firebase CLI not installed. Install with: npm install -g firebase-tools")
 	}
 
+	// Get enabled emulators
+	enabledList := p.getEnabledEmulatorsList()
+	if len(enabledList) == 0 {
+		p.mu.Lock()
+		p.lastError = "no emulators enabled"
+		p.mu.Unlock()
+		return fmt.Errorf("no emulators enabled. Enable emulators in plugin settings")
+	}
+
+	p.mu.Lock()
 	p.running = true
 	p.stopCh = make(chan struct{})
 	p.mu.Unlock()
 
 	// Start emulators
-	if err := p.startEmulators(); err != nil {
+	if err := p.startEmulators(enabledList); err != nil {
 		p.mu.Lock()
 		p.running = false
+		p.lastError = err.Error()
 		p.mu.Unlock()
 		return err
 	}
 
-	p.ctx.Log(PluginID, "Firebase emulators started")
+	if p.ctx != nil {
+		p.ctx.Log(PluginID, "Firebase emulators started")
+	}
 	return nil
 }
 
@@ -238,38 +332,110 @@ func (p *FirebasePlugin) Stop() error {
 	}
 
 	p.running = false
-	close(p.stopCh)
+
+	// Close stopCh if it's not nil and not already closed
+	if p.stopCh != nil {
+		select {
+		case <-p.stopCh:
+			// Already closed
+		default:
+			close(p.stopCh)
+		}
+	}
 
 	if p.cmd != nil && p.cmd.Process != nil {
 		// Try graceful shutdown first
 		p.cmd.Process.Signal(os.Interrupt)
 
-		// Force kill after a moment if needed
+		// Wait for the process to exit
 		go func() {
-			// Give it time to shutdown gracefully
-			// The process should export data if exportOnExit is enabled
 			p.cmd.Wait()
 		}()
 	}
+
+	ctx := p.ctx
 	p.mu.Unlock()
 
-	p.ctx.Log(PluginID, "Firebase emulators stopped")
+	if ctx != nil {
+		ctx.Log(PluginID, "Firebase emulators stopped")
+	}
 	return nil
 }
 
 // Internal methods
 
+func (p *FirebasePlugin) getEnabledEmulatorsList() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	var enabled []string
+	for emu, isEnabled := range p.enabledEmulators {
+		if isEnabled {
+			enabled = append(enabled, emu)
+		}
+	}
+	return enabled
+}
+
 func (p *FirebasePlugin) detectFirebaseConfig() {
-	// Look for firebase.json in project root
-	project := p.ctx.GetProject()
-	if project == nil {
+	// Look for firebase.json in multiple locations (monorepo support)
+	if p.ctx == nil {
 		return
 	}
+	project := p.ctx.GetProject()
 
-	configPath := filepath.Join(project.RootDir, "firebase.json")
-	if _, err := os.Stat(configPath); err == nil {
-		p.configPath = configPath
-		p.loadFirebaseConfig(configPath)
+	// Get starting directory
+	var startDir string
+	if project != nil {
+		startDir = project.RootDir
+	} else {
+		var err error
+		startDir, err = os.Getwd()
+		if err != nil {
+			return
+		}
+	}
+
+	// Search locations in order of priority:
+	// 1. Project root
+	// 2. Current working directory
+	// 3. Parent directories (up to 3 levels)
+	// 4. Common monorepo subdirectories (firebase/, functions/, backend/)
+	searchPaths := []string{
+		startDir,
+	}
+
+	// Add current working directory if different
+	cwd, _ := os.Getwd()
+	if cwd != startDir {
+		searchPaths = append(searchPaths, cwd)
+	}
+
+	// Add parent directories
+	dir := startDir
+	for i := 0; i < 3; i++ {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		searchPaths = append(searchPaths, parent)
+		dir = parent
+	}
+
+	// Add common monorepo subdirectories from cwd
+	commonSubdirs := []string{"firebase", "functions", "backend", "server"}
+	for _, subdir := range commonSubdirs {
+		searchPaths = append(searchPaths, filepath.Join(cwd, subdir))
+	}
+
+	// Search for firebase.json
+	for _, searchPath := range searchPaths {
+		configPath := filepath.Join(searchPath, "firebase.json")
+		if _, err := os.Stat(configPath); err == nil {
+			p.configPath = configPath
+			p.loadFirebaseConfig(configPath)
+			return
+		}
 	}
 }
 
@@ -308,35 +474,55 @@ func (p *FirebasePlugin) loadFirebaseConfig(path string) {
 	}
 }
 
-func (p *FirebasePlugin) startEmulators() error {
+func (p *FirebasePlugin) startEmulators(enabledList []string) error {
 	args := []string{"emulators:start"}
+
+	// Add --only flag with enabled emulators
+	if len(enabledList) > 0 {
+		args = append(args, "--only", strings.Join(enabledList, ","))
+	}
 
 	// Add import path if specified
 	p.mu.RLock()
 	importPath := p.importPath
 	exportOnExit := p.exportOnExit
+	exportPath := p.exportPath
 	p.mu.RUnlock()
 
 	if importPath != "" {
 		args = append(args, "--import", importPath)
 	}
 
-	if exportOnExit {
-		exportPath := ".firebase-export"
-		if ep := p.ctx.GetPluginSetting(PluginID, "exportPath"); ep != nil {
-			if s, ok := ep.(string); ok && s != "" {
-				exportPath = s
-			}
-		}
+	if exportOnExit && exportPath != "" {
 		args = append(args, "--export-on-exit", exportPath)
 	}
 
 	cmd := exec.Command("firebase", args...)
 
-	// Get project root for working directory
-	project := p.ctx.GetProject()
-	if project != nil {
-		cmd.Dir = project.RootDir
+	// Set working directory to where firebase.json is located
+	p.mu.RLock()
+	configPath := p.configPath
+	ctx := p.ctx
+	p.mu.RUnlock()
+
+	if configPath != "" {
+		// Use the directory containing firebase.json
+		cmd.Dir = filepath.Dir(configPath)
+	} else if ctx != nil {
+		// Fallback to project root
+		project := ctx.GetProject()
+		if project != nil {
+			cmd.Dir = project.RootDir
+		}
+	}
+
+	// Log the command being run
+	if ctx != nil {
+		cmdStr := "firebase " + strings.Join(args, " ")
+		ctx.Log(PluginID, fmt.Sprintf("Starting: %s", cmdStr))
+		if cmd.Dir != "" {
+			ctx.Log(PluginID, fmt.Sprintf("Working directory: %s", cmd.Dir))
+		}
 	}
 
 	// Capture output
@@ -355,6 +541,16 @@ func (p *FirebasePlugin) startEmulators() error {
 
 	p.mu.Lock()
 	p.cmd = cmd
+	// Initialize emulators list based on enabled list
+	p.emulators = make([]EmulatorStatus, 0, len(enabledList))
+	for _, name := range enabledList {
+		p.emulators = append(p.emulators, EmulatorStatus{
+			Name:    name,
+			Host:    "localhost",
+			Port:    0, // Will be detected from output
+			Running: false,
+		})
+	}
 	p.mu.Unlock()
 
 	// Read output in goroutines
@@ -380,10 +576,17 @@ func (p *FirebasePlugin) startEmulators() error {
 func (p *FirebasePlugin) readOutput(reader interface{ Read([]byte) (int, error) }) {
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
-		select {
-		case <-p.stopCh:
-			return
-		default:
+		p.mu.RLock()
+		stopCh := p.stopCh
+		ctx := p.ctx
+		p.mu.RUnlock()
+
+		if stopCh != nil {
+			select {
+			case <-stopCh:
+				return
+			default:
+			}
 		}
 
 		line := scanner.Text()
@@ -392,7 +595,9 @@ func (p *FirebasePlugin) readOutput(reader interface{ Read([]byte) (int, error) 
 		p.parseEmulatorStatus(line)
 
 		// Log to lazycap
-		p.ctx.Log(PluginID, line)
+		if ctx != nil {
+			ctx.Log(PluginID, line)
+		}
 	}
 }
 
@@ -403,10 +608,27 @@ func (p *FirebasePlugin) parseEmulatorStatus(line string) {
 	// Firebase emulator output contains lines like:
 	// "✔  firestore: Firestore Emulator UI at http://127.0.0.1:4000/firestore"
 	// "✔  All emulators ready! It is now safe to connect your app."
+	// "i  firestore: Firestore Emulator logging to firestore-debug.log"
+	// "✔  functions: Using node@18 from host."
+
+	lowerLine := strings.ToLower(line)
 
 	for i, emu := range p.emulators {
 		// Check if this emulator is mentioned as running
-		if strings.Contains(line, emu.Name+":") && strings.Contains(line, "Emulator") {
+		emuLower := strings.ToLower(emu.Name)
+		if strings.Contains(lowerLine, emuLower+":") ||
+			strings.Contains(lowerLine, emuLower+" emulator") {
+			// Check for success indicators
+			if strings.Contains(line, "✔") || strings.Contains(lowerLine, "ready") ||
+				strings.Contains(lowerLine, "running") || strings.Contains(lowerLine, "listening") {
+				p.emulators[i].Running = true
+			}
+		}
+	}
+
+	// Check for "All emulators ready" message
+	if strings.Contains(lowerLine, "all emulators ready") {
+		for i := range p.emulators {
 			p.emulators[i].Running = true
 		}
 	}
@@ -442,18 +664,9 @@ func (p *FirebasePlugin) IsFirebaseProject() bool {
 	return p.configPath != ""
 }
 
-// readOutput helper for *os.File (fix the type)
-func (p *FirebasePlugin) readOutputPipe(pipe interface{ Read([]byte) (int, error) }) {
-	scanner := bufio.NewScanner(pipe)
-	for scanner.Scan() {
-		select {
-		case <-p.stopCh:
-			return
-		default:
-		}
-
-		line := scanner.Text()
-		p.parseEmulatorStatus(line)
-		p.ctx.Log(PluginID, line)
-	}
+// GetLastError returns the last error message
+func (p *FirebasePlugin) GetLastError() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.lastError
 }

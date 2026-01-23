@@ -212,7 +212,7 @@ type Context interface {
 ```go
 package myplugin
 
-import "lazycap/internal/plugin"
+import "github.com/icarus-itcs/lazycap/internal/plugin"
 
 const PluginID = "my-plugin"
 
@@ -296,7 +296,7 @@ func (p *MyPlugin) GetCommands() []plugin.Command {
 Add to `internal/plugins/plugins.go`:
 
 ```go
-import "lazycap/internal/plugins/myplugin"
+import "github.com/icarus-itcs/lazycap/internal/plugins/myplugin"
 
 func RegisterAll() error {
     // ... existing plugins

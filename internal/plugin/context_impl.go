@@ -5,11 +5,18 @@ import (
 	"sync"
 	"time"
 
-	"lazycap/internal/cap"
-	"lazycap/internal/debug"
-	"lazycap/internal/device"
-	"lazycap/internal/settings"
+	"github.com/icarus-itcs/lazycap/internal/cap"
+	"github.com/icarus-itcs/lazycap/internal/debug"
+	"github.com/icarus-itcs/lazycap/internal/device"
+	"github.com/icarus-itcs/lazycap/internal/settings"
 )
+
+// PluginLogEntry represents a log entry from a plugin
+type PluginLogEntry struct {
+	PluginID string
+	Message  string
+	Time     time.Time
+}
 
 // AppContext implements Context interface for the main application
 // This bridges the plugin system with the UI model
@@ -37,6 +44,9 @@ type AppContext struct {
 
 	// Process logs cache
 	processLogs map[string][]string
+
+	// Plugin log channel for async log delivery to UI
+	logChan chan PluginLogEntry
 }
 
 // NewAppContext creates a new application context
@@ -44,7 +54,13 @@ func NewAppContext(manager *Manager) *AppContext {
 	return &AppContext{
 		manager:     manager,
 		processLogs: make(map[string][]string),
+		logChan:     make(chan PluginLogEntry, 100), // Buffered channel for logs
 	}
+}
+
+// GetLogChannel returns the log channel for the UI to consume
+func (c *AppContext) GetLogChannel() <-chan PluginLogEntry {
+	return c.logChan
 }
 
 // SetProject sets the current project
@@ -330,12 +346,15 @@ func (c *AppContext) Emit(event EventType, data interface{}) {
 }
 
 func (c *AppContext) Log(pluginID string, message string) {
-	c.mu.RLock()
-	fn := c.onLog
-	c.mu.RUnlock()
-
-	if fn != nil {
-		fn(pluginID, message)
+	// Send to log channel (non-blocking)
+	select {
+	case c.logChan <- PluginLogEntry{
+		PluginID: pluginID,
+		Message:  message,
+		Time:     time.Now(),
+	}:
+	default:
+		// Channel full, drop log to avoid blocking
 	}
 }
 

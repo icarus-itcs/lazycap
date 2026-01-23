@@ -1,8 +1,8 @@
 package plugins
 
 import (
-	"lazycap/internal/plugins/firebase"
-	"lazycap/internal/plugins/mcp"
+	"github.com/icarus-itcs/lazycap/internal/plugins/firebase"
+	"github.com/icarus-itcs/lazycap/internal/plugins/mcp"
 )
 
 // RegisterAll registers all built-in plugins

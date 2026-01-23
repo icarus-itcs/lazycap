@@ -19,12 +19,18 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"lazycap/internal/cap"
-	"lazycap/internal/debug"
-	"lazycap/internal/device"
-	"lazycap/internal/plugin"
-	"lazycap/internal/preflight"
-	"lazycap/internal/settings"
+	"github.com/icarus-itcs/lazycap/internal/cap"
+	"github.com/icarus-itcs/lazycap/internal/debug"
+	"github.com/icarus-itcs/lazycap/internal/device"
+	"github.com/icarus-itcs/lazycap/internal/plugin"
+	"github.com/icarus-itcs/lazycap/internal/preflight"
+	"github.com/icarus-itcs/lazycap/internal/settings"
+)
+
+// Status indicator styles
+var (
+	statusOnlineStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00"))
+	statusOfflineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
 )
 
 // Comprehensive ANSI escape sequence regex - handles:
@@ -106,7 +112,12 @@ const (
 // Model is the main app state
 type Model struct {
 	project     *cap.Project
+	projects    []*cap.Project // All discovered projects (for monorepo support)
 	upgradeInfo *cap.UpgradeInfo
+
+	// Project selector (for monorepos with multiple projects)
+	showProjectSelector bool
+	projectCursor       int
 
 	// Devices
 	devices        []device.Device
@@ -129,10 +140,12 @@ type Model struct {
 	settingsCategory int
 
 	// Plugins
-	pluginManager *plugin.Manager
-	pluginContext *plugin.AppContext
-	showPlugins   bool
-	pluginCursor  int
+	pluginManager       *plugin.Manager
+	pluginContext       *plugin.AppContext
+	showPlugins         bool
+	pluginCursor        int
+	showPluginSettings  bool
+	pluginSettingCursor int
 
 	// UI
 	focus         Focus
@@ -183,6 +196,7 @@ type keyMap struct {
 	Debug     key.Binding
 	Plugins   key.Binding
 	Enter     key.Binding
+	Workspace key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -208,6 +222,7 @@ func defaultKeyMap() keyMap {
 		Debug:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "debug")),
 		Plugins:   key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "plugins")),
 		Enter:     key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "toggle")),
+		Workspace: key.NewBinding(key.WithKeys("W"), key.WithHelp("W", "projects")),
 	}
 }
 
@@ -227,6 +242,25 @@ func (k keyMap) FullHelp() [][]key.Binding {
 // NewModel creates a new model (without plugin support)
 func NewModel(project *cap.Project) Model {
 	return NewModelWithPlugins(project, nil, nil)
+}
+
+// NewModelWithProjects creates a new model with multiple discovered projects
+func NewModelWithProjects(projects []*cap.Project, pluginMgr *plugin.Manager, appCtx *plugin.AppContext) Model {
+	var activeProject *cap.Project
+	showSelector := false
+
+	if len(projects) == 1 {
+		activeProject = projects[0]
+	} else if len(projects) > 1 {
+		// Multiple projects found - show selector
+		activeProject = projects[0]
+		showSelector = true
+	}
+
+	m := NewModelWithPlugins(activeProject, pluginMgr, appCtx)
+	m.projects = projects
+	m.showProjectSelector = showSelector
+	return m
 }
 
 // NewModelWithPlugins creates a new model with plugin support
@@ -378,11 +412,11 @@ func NewDemoModel(project *cap.Project, pluginMgr *plugin.Manager, appCtx *plugi
 		{
 			ID:        "p1",
 			Name:      "iPhone 15 Pro (live)",
-			Command:   "npx cap run ios -l --external --target iphone-15-pro-max",
+			Command:   "npx cap run ios -l --target iphone-15-pro-max",
 			Status:    ProcessRunning,
 			StartTime: now.Add(-5 * time.Minute),
 			Logs: []string{
-				"[14:27:12] $ npx cap run ios -l --external --target iphone-15-pro-max",
+				"[14:27:12] $ npx cap run ios -l --target iphone-15-pro-max",
 				"",
 				"[info] Starting live reload server...",
 				"[info] Building web assets...",
@@ -424,11 +458,11 @@ func NewDemoModel(project *cap.Project, pluginMgr *plugin.Manager, appCtx *plugi
 		{
 			ID:        "p2",
 			Name:      "Pixel 8 Pro (live)",
-			Command:   "npx cap run android -l --external --target pixel-8-pro",
+			Command:   "npx cap run android -l --target pixel-8-pro",
 			Status:    ProcessRunning,
 			StartTime: now.Add(-3 * time.Minute),
 			Logs: []string{
-				"[14:29:12] $ npx cap run android -l --external --target pixel-8-pro",
+				"[14:29:12] $ npx cap run android -l --target pixel-8-pro",
 				"",
 				"[info] Starting live reload server...",
 				"[info] Syncing to Android...",
@@ -581,6 +615,12 @@ type deviceBootedMsg struct {
 	err        error
 }
 
+type pluginLogMsg struct {
+	pluginID string
+	message  string
+	time     time.Time
+}
+
 // Commands
 func loadDevices() tea.Msg {
 	devices, err := cap.ListDevices()
@@ -644,6 +684,28 @@ func bootDevice(dev *device.Device, liveReload bool) tea.Cmd {
 	}
 }
 
+// listenForPluginLogs creates a command that waits for plugin logs from the channel
+func listenForPluginLogs(ctx *plugin.AppContext) tea.Cmd {
+	if ctx == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		logChan := ctx.GetLogChannel()
+		if logChan == nil {
+			return nil
+		}
+		entry, ok := <-logChan
+		if !ok {
+			return nil
+		}
+		return pluginLogMsg{
+			pluginID: entry.PluginID,
+			message:  entry.Message,
+			time:     entry.Time,
+		}
+	}
+}
+
 // gracefulShutdown kills all running processes and stops plugins
 func (m *Model) gracefulShutdown() {
 	// Stop all running processes
@@ -653,20 +715,28 @@ func (m *Model) gracefulShutdown() {
 		}
 	}
 
-	// Stop all plugins
+	// Record which plugins were running before stopping them
 	if m.pluginManager != nil {
+		for _, p := range plugin.All() {
+			m.pluginManager.SetRunning(p.ID(), p.IsRunning())
+		}
 		m.pluginManager.StopAll()
 	}
 }
 
 // Init starts the app
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		loadDevices,
 		checkUpgrade,
 		m.spinner.Tick,
 		setTerminalTitle(m.getTerminalTitle()),
-	)
+	}
+	// Start listening for plugin logs if plugin context is available
+	if m.pluginContext != nil {
+		cmds = append(cmds, listenForPluginLogs(m.pluginContext))
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update handles all messages
@@ -695,6 +765,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle plugins panel input
 		if m.showPlugins {
 			return m.handlePluginsInput(msg)
+		}
+
+		// Handle project selector input
+		if m.showProjectSelector {
+			return m.handleProjectSelectorInput(msg)
 		}
 
 		switch {
@@ -767,7 +842,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showPreflight = false
 			m.showSettings = false
 			m.showDebug = false
+			m.showProjectSelector = false
 			m.pluginCursor = 0
+			return m, nil
+
+		case key.Matches(msg, m.keys.Workspace):
+			// Only show if there are multiple projects
+			if len(m.projects) > 1 {
+				m.showProjectSelector = !m.showProjectSelector
+				m.showHelp = false
+				m.showPreflight = false
+				m.showSettings = false
+				m.showDebug = false
+				m.showPlugins = false
+				// Set cursor to current project
+				for i, p := range m.projects {
+					if m.project != nil && p.RootDir == m.project.RootDir {
+						m.projectCursor = i
+						break
+					}
+				}
+			} else {
+				m.setStatus("Only one project in workspace")
+			}
 			return m, nil
 
 		case key.Matches(msg, m.keys.Tab):
@@ -952,6 +1049,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		m.loading = false
 		m.addLog(fmt.Sprintf("Error: %v", msg.err))
+
+	case pluginLogMsg:
+		// Find or create a process tab for this plugin
+		var pluginProcess *Process
+		processID := "plugin-" + msg.pluginID
+		for _, p := range m.processes {
+			if p.ID == processID {
+				pluginProcess = p
+				break
+			}
+		}
+		if pluginProcess == nil {
+			// Create a new process tab for this plugin
+			pluginName := msg.pluginID
+			// Capitalize first letter for display
+			if len(pluginName) > 0 {
+				pluginName = strings.ToUpper(pluginName[:1]) + pluginName[1:]
+			}
+			pluginProcess = &Process{
+				ID:        processID,
+				Name:      pluginName,
+				Command:   "plugin:" + msg.pluginID,
+				Status:    ProcessRunning,
+				StartTime: time.Now(),
+				Logs:      []string{},
+			}
+			m.processes = append(m.processes, pluginProcess)
+		}
+		// Add the log line with timestamp
+		ts := msg.time.Format("15:04:05")
+		pluginProcess.AddLog(fmt.Sprintf("[%s] %s", ts, msg.message))
+		// Check if this is a "stopped" message to mark process as finished
+		lowerMsg := strings.ToLower(msg.message)
+		if strings.Contains(lowerMsg, "stopped") || strings.Contains(lowerMsg, "shutdown") {
+			pluginProcess.Status = ProcessSuccess
+			pluginProcess.EndTime = time.Now()
+		}
+		// Check for errors
+		if strings.HasPrefix(msg.message, "ERROR:") || strings.Contains(lowerMsg, "error:") {
+			pluginProcess.Status = ProcessFailed
+		}
+		// Update viewport if this plugin's logs are being viewed
+		if m.getSelectedProcess() == pluginProcess {
+			m.updateLogViewport()
+		}
+		// Continue listening for more plugin logs
+		cmds = append(cmds, listenForPluginLogs(m.pluginContext))
 	}
 
 	if m.hasRunningProcesses() && len(cmds) == 0 {
@@ -966,7 +1110,7 @@ func (m *Model) updateLayout() {
 		return
 	}
 	logWidth := m.width - 36 - 6
-	logHeight := m.height - 8
+	logHeight := m.height - 9 // Account for header + status bar
 	if logHeight < 5 {
 		logHeight = 5
 	}
@@ -1047,9 +1191,9 @@ func (m *Model) runAction(action string, liveReload bool) tea.Cmd {
 		return m.startBuildCommand()
 	case "open":
 		if dev == nil {
-			if m.project.HasIOS {
+			if m.project != nil && m.project.HasIOS {
 				return m.startOpenCommand("ios")
-			} else if m.project.HasAndroid {
+			} else if m.project != nil && m.project.HasAndroid {
 				return m.startOpenCommand("android")
 			}
 			m.addLog("No platform available")
@@ -1085,7 +1229,11 @@ func (m *Model) startRunCommand(dev *device.Device, liveReload bool) tea.Cmd {
 	name := shortName
 	args := []string{"cap", "run", dev.Platform, "--target", dev.ID}
 	if liveReload {
-		args = append(args, "-l", "--external")
+		args = append(args, "-l")
+		// Get host from settings if configured
+		if host := m.settings.GetString("webHost"); host != "" {
+			args = append(args, "--host", host)
+		}
 		name = shortName + " (live)"
 	}
 	p := m.createProcess(name, "npx "+strings.Join(args, " "))
@@ -1314,6 +1462,10 @@ func (m Model) View() string {
 		return m.renderPlugins()
 	}
 
+	if m.showProjectSelector {
+		return m.renderProjectSelector()
+	}
+
 	// Build the view
 	left := m.renderLeft()
 	right := m.renderRight()
@@ -1323,6 +1475,7 @@ func (m Model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		"",
 		m.renderHeader(),
+		m.renderStatusBar(),
 		"",
 		main,
 		"",
@@ -1334,34 +1487,35 @@ func (m *Model) renderHeader() string {
 	// Logo
 	logo := "  " + LogoCompact()
 
-	// Project info
-	project := projectStyle.Render(m.project.Name)
+	// Project info (with nil check)
+	projectName := "No project"
+	if m.project != nil {
+		projectName = m.project.Name
+	}
+	project := projectStyle.Render(projectName)
+
+	// Workspace indicator (when multiple projects)
+	var workspaceHint string
+	if len(m.projects) > 1 {
+		workspaceHint = mutedStyle.Render(fmt.Sprintf(" (1/%d)", len(m.projects)))
+		// Find actual position
+		for i, p := range m.projects {
+			if m.project != nil && p.RootDir == m.project.RootDir {
+				workspaceHint = mutedStyle.Render(fmt.Sprintf(" (%d/%d W=switch)", i+1, len(m.projects)))
+				break
+			}
+		}
+	}
 
 	// Platforms
 	var platforms []string
-	if m.project.HasIOS {
+	if m.project != nil && m.project.HasIOS {
 		platforms = append(platforms, iosBadge.Render("iOS"))
 	}
-	if m.project.HasAndroid {
+	if m.project != nil && m.project.HasAndroid {
 		platforms = append(platforms, androidBadge.Render("Android"))
 	}
 	platformStr := strings.Join(platforms, " ")
-
-	// Status
-	var status string
-	if m.loading {
-		status = m.spinner.View() + " loading..."
-	} else if m.hasRunningProcesses() {
-		count := 0
-		for _, p := range m.processes {
-			if p.Status == ProcessRunning {
-				count++
-			}
-		}
-		status = fmt.Sprintf("%s %d running", m.spinner.View(), count)
-	} else {
-		status = mutedStyle.Render(fmt.Sprintf("%d devices", len(m.devices)))
-	}
 
 	// Upgrade notice
 	var upgrade string
@@ -1379,30 +1533,128 @@ func (m *Model) renderHeader() string {
 		}
 	}
 
-	// Plugin status indicators
-	var pluginStatus string
-	if m.pluginManager != nil {
-		runningPlugins := m.pluginManager.GetRunningPlugins()
-		if len(runningPlugins) > 0 {
-			var statusParts []string
-			for _, p := range runningPlugins {
-				if sl := p.GetStatusLine(); sl != "" {
-					statusParts = append(statusParts, sl)
-				}
-			}
-			if len(statusParts) > 0 {
-				pluginStatus = "  " + mutedStyle.Render(strings.Join(statusParts, " • "))
-			}
-		}
-	}
-
 	// Status message (show for 3 seconds)
 	var statusMsg string
 	if m.statusMessage != "" && time.Since(m.statusTime) < 3*time.Second {
 		statusMsg = "  " + successStyle.Render(m.statusMessage)
 	}
 
-	return fmt.Sprintf("%s  %s  %s  %s%s%s%s%s", logo, project, platformStr, status, upgrade, preflightIndicator, pluginStatus, statusMsg)
+	headerLine := fmt.Sprintf("%s  %s%s  %s%s%s%s", logo, project, workspaceHint, platformStr, upgrade, preflightIndicator, statusMsg)
+
+	return headerLine
+}
+
+// renderStatusBar creates a status bar showing service states
+func (m *Model) renderStatusBar() string {
+	var statusItems []string
+
+	// Device count
+	onlineCount := 0
+	for _, d := range m.devices {
+		if d.Online {
+			onlineCount++
+		}
+	}
+	if m.loading {
+		statusItems = append(statusItems, m.spinner.View()+" Devices...")
+	} else {
+		deviceStatus := fmt.Sprintf("%d/%d", onlineCount, len(m.devices))
+		if onlineCount > 0 {
+			statusItems = append(statusItems, statusOnlineStyle.Render("●")+" Devices "+mutedStyle.Render(deviceStatus))
+		} else {
+			statusItems = append(statusItems, statusOfflineStyle.Render("○")+" Devices "+mutedStyle.Render(deviceStatus))
+		}
+	}
+
+	// Process count
+	runningCount := 0
+	for _, p := range m.processes {
+		if p.Status == ProcessRunning {
+			runningCount++
+		}
+	}
+	if runningCount > 0 {
+		statusItems = append(statusItems, m.spinner.View()+" "+fmt.Sprintf("%d running", runningCount))
+	} else if len(m.processes) > 0 {
+		statusItems = append(statusItems, statusOfflineStyle.Render("○")+" "+mutedStyle.Render("idle"))
+	}
+
+	// Plugin statuses with more detail
+	if m.pluginManager != nil {
+		allPlugins := plugin.All()
+
+		// MCP Server status with tool count
+		mcpPluginFound := false
+		for _, p := range allPlugins {
+			if p.ID() == "mcp-server" {
+				mcpPluginFound = true
+				enabledCount, totalCount := m.settings.GetMCPToolCount()
+				toolInfo := fmt.Sprintf("(%d/%d)", enabledCount, totalCount)
+
+				if p.IsRunning() {
+					statusLine := p.GetStatusLine()
+					if statusLine != "" {
+						statusItems = append(statusItems, statusOnlineStyle.Render("●")+" "+statusLine+" "+mutedStyle.Render(toolInfo))
+					} else {
+						statusItems = append(statusItems, statusOnlineStyle.Render("●")+" MCP "+mutedStyle.Render(toolInfo))
+					}
+				} else if m.pluginManager.IsEnabled(p.ID()) {
+					statusItems = append(statusItems, statusOfflineStyle.Render("○")+" "+mutedStyle.Render("MCP off")+" "+mutedStyle.Render(toolInfo))
+				}
+				break
+			}
+		}
+		// Show MCP status even without the plugin (for CLI-only MCP usage)
+		if !mcpPluginFound && m.settings.MCPEnabled {
+			enabledCount, totalCount := m.settings.GetMCPToolCount()
+			toolInfo := fmt.Sprintf("(%d/%d tools)", enabledCount, totalCount)
+			statusItems = append(statusItems, mutedStyle.Render("MCP CLI")+" "+mutedStyle.Render(toolInfo))
+		}
+
+		// Firebase status
+		for _, p := range allPlugins {
+			if p.ID() == "firebase-emulator" {
+				if p.IsRunning() {
+					statusLine := p.GetStatusLine()
+					if statusLine != "" {
+						statusItems = append(statusItems, statusOnlineStyle.Render("●")+" "+statusLine)
+					} else {
+						statusItems = append(statusItems, statusOnlineStyle.Render("●")+" Firebase")
+					}
+				} else {
+					// Check if firebase.json exists to show as available but off
+					if m.project != nil {
+						firebasePath := filepath.Join(m.project.RootDir, "firebase.json")
+						if _, err := os.Stat(firebasePath); err == nil {
+							statusItems = append(statusItems, statusOfflineStyle.Render("○")+" "+mutedStyle.Render("Firebase off"))
+						}
+					}
+				}
+				break
+			}
+		}
+
+		// Other running plugins
+		for _, p := range allPlugins {
+			if p.ID() == "mcp-server" || p.ID() == "firebase-emulator" {
+				continue // Already handled above
+			}
+			if p.IsRunning() {
+				statusLine := p.GetStatusLine()
+				if statusLine != "" {
+					statusItems = append(statusItems, statusOnlineStyle.Render("●")+" "+statusLine)
+				}
+			}
+		}
+	}
+
+	if len(statusItems) == 0 {
+		return ""
+	}
+
+	// Join with separator
+	statusBar := "  " + strings.Join(statusItems, "  "+mutedStyle.Render("│")+"  ")
+	return statusBar
 }
 
 func (m *Model) renderLeft() string {
@@ -1477,7 +1729,7 @@ func (m *Model) renderLeft() string {
 
 	content := lipgloss.JoinVertical(lipgloss.Left, items...)
 
-	paneHeight := m.height - 8
+	paneHeight := m.height - 9 // Account for header + status bar
 	if paneHeight < 5 {
 		paneHeight = 5
 	}
@@ -1492,7 +1744,7 @@ func (m *Model) renderLeft() string {
 
 func (m *Model) renderRight() string {
 	paneWidth := m.width - 36 - 6
-	paneHeight := m.height - 8
+	paneHeight := m.height - 9 // Account for header + status bar
 	if paneHeight < 5 {
 		paneHeight = 5
 	}
@@ -1508,10 +1760,34 @@ func (m *Model) renderRight() string {
 		return m.renderWelcome(paneWidth, paneHeight)
 	}
 
-	// Process tabs - simple text-based tabs
+	// Process tabs - show max 3 at a time, centered on selected
+	const maxTabs = 3
+
+	startIdx := 0
+	endIdx := len(m.processes)
+
+	if len(m.processes) > maxTabs {
+		// Center around selected tab
+		startIdx = m.selectedProcess - maxTabs/2
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		endIdx = startIdx + maxTabs
+		if endIdx > len(m.processes) {
+			endIdx = len(m.processes)
+			startIdx = endIdx - maxTabs
+		}
+	}
+
 	var tabParts []string
 
-	for i, p := range m.processes {
+	// Left overflow indicator
+	if startIdx > 0 {
+		tabParts = append(tabParts, mutedStyle.Render(fmt.Sprintf("◀%d", startIdx)))
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		p := m.processes[i]
 		// Status icon
 		var icon string
 		switch p.Status {
@@ -1526,21 +1802,24 @@ func (m *Model) renderRight() string {
 		}
 
 		name := p.Name
-		if len(name) > 12 {
-			name = name[:10] + ".."
+		if len(name) > 14 {
+			name = name[:12] + ".."
 		}
 
 		// Simple format: selected gets highlight, others are muted
 		if i == m.selectedProcess {
-			// Selected: bright with underline effect using brackets
 			tabParts = append(tabParts, fmt.Sprintf("%s [%s]", icon, lipgloss.NewStyle().Foreground(capBlue).Bold(true).Render(name)))
 		} else {
-			// Unselected: muted
 			tabParts = append(tabParts, fmt.Sprintf("%s %s", icon, mutedStyle.Render(name)))
 		}
 	}
 
-	tabBar := strings.Join(tabParts, "  │  ")
+	// Right overflow indicator
+	if endIdx < len(m.processes) {
+		tabParts = append(tabParts, mutedStyle.Render(fmt.Sprintf("%d▶", len(m.processes)-endIdx)))
+	}
+
+	tabBar := strings.Join(tabParts, " │ ")
 
 	// Logs
 	logContent := m.logViewport.View()
@@ -1554,22 +1833,9 @@ func (m *Model) renderRight() string {
 }
 
 func (m *Model) renderWelcome(width, height int) string {
-	// Capacitor-style lightning bolt logo
-	boltStyle := lipgloss.NewStyle().Foreground(capBlue).Bold(true)
 	textStyle := lipgloss.NewStyle().Foreground(capLight).Bold(true)
 
-	// Lightning bolt ASCII art (Capacitor logo)
 	logo := lipgloss.JoinVertical(lipgloss.Center,
-		"",
-		boltStyle.Render("        ██████████"),
-		boltStyle.Render("       ██████████"),
-		boltStyle.Render("      ██████████"),
-		boltStyle.Render("     ██████████"),
-		boltStyle.Render("    ████████████████"),
-		boltStyle.Render("        ██████████"),
-		boltStyle.Render("         ██████████"),
-		boltStyle.Render("          ██████████"),
-		boltStyle.Render("           █████████"),
 		"",
 		textStyle.Render("lazycap"),
 		mutedStyle.Render("Capacitor Dashboard"),
@@ -2082,6 +2348,61 @@ func (m *Model) renderDebug() string {
 	return strings.Join(lines, "\n")
 }
 
+func (m Model) handleProjectSelectorInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		m.gracefulShutdown()
+		return m, tea.Quit
+
+	case "q":
+		if m.confirmQuit && time.Since(m.quitTime) < 3*time.Second {
+			m.gracefulShutdown()
+			return m, tea.Quit
+		}
+		m.confirmQuit = true
+		m.quitTime = time.Now()
+		m.setStatus("Press q again to quit")
+		return m, nil
+
+	case "esc":
+		// Close selector (keep current project)
+		m.showProjectSelector = false
+		return m, nil
+
+	case "up", "k":
+		if m.projectCursor > 0 {
+			m.projectCursor--
+		}
+		return m, nil
+
+	case "down", "j":
+		if m.projectCursor < len(m.projects)-1 {
+			m.projectCursor++
+		}
+		return m, nil
+
+	case "enter", " ":
+		// Select project and close selector
+		if len(m.projects) > 0 && m.projectCursor < len(m.projects) {
+			m.project = m.projects[m.projectCursor]
+			m.showProjectSelector = false
+
+			// Update plugin context with new project
+			if m.pluginContext != nil {
+				m.pluginContext.SetProject(m.project)
+			}
+
+			m.setStatus(fmt.Sprintf("Switched to %s", m.project.Name))
+
+			// Refresh devices for this project
+			return m, loadDevices
+		}
+		return m, nil
+	}
+
+	return m, nil
+}
+
 func (m Model) handlePluginsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.pluginManager == nil {
 		// No plugin manager, just close
@@ -2090,6 +2411,11 @@ func (m Model) handlePluginsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	allPlugins := plugin.All()
+
+	// If showing plugin settings, handle that input
+	if m.showPluginSettings {
+		return m.handlePluginSettingsInput(msg)
+	}
 
 	switch msg.String() {
 	case "ctrl+c":
@@ -2131,12 +2457,16 @@ func (m Model) handlePluginsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.setStatus(fmt.Sprintf("Failed to stop %s: %v", p.Name(), err))
 				} else {
 					m.setStatus(fmt.Sprintf("Stopped %s", p.Name()))
+					// Remember that this plugin should not auto-start
+					m.pluginManager.SetRunning(p.ID(), false)
 				}
 			} else {
 				if err := p.Start(); err != nil {
 					m.setStatus(fmt.Sprintf("Failed to start %s: %v", p.Name(), err))
 				} else {
 					m.setStatus(fmt.Sprintf("Started %s", p.Name()))
+					// Remember that this plugin should auto-start next time
+					m.pluginManager.SetRunning(p.ID(), true)
 				}
 			}
 		}
@@ -2152,8 +2482,91 @@ func (m Model) handlePluginsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				if enabled {
 					m.setStatus(fmt.Sprintf("Disabled %s", p.Name()))
+					// Clear the running state when disabled
+					m.pluginManager.SetRunning(p.ID(), false)
 				} else {
 					m.setStatus(fmt.Sprintf("Enabled %s", p.Name()))
+				}
+			}
+		}
+		return m, nil
+
+	case "s":
+		// Open plugin settings
+		if len(allPlugins) > 0 && m.pluginCursor < len(allPlugins) {
+			p := allPlugins[m.pluginCursor]
+			settings := p.GetSettings()
+			if len(settings) > 0 {
+				m.showPluginSettings = true
+				m.pluginSettingCursor = 0
+			} else {
+				m.setStatus(fmt.Sprintf("%s has no configurable settings", p.Name()))
+			}
+		}
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m Model) handlePluginSettingsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	allPlugins := plugin.All()
+	if m.pluginCursor >= len(allPlugins) {
+		m.showPluginSettings = false
+		return m, nil
+	}
+
+	p := allPlugins[m.pluginCursor]
+	settings := p.GetSettings()
+
+	switch msg.String() {
+	case "ctrl+c":
+		m.gracefulShutdown()
+		return m, tea.Quit
+
+	case "q":
+		if m.confirmQuit && time.Since(m.quitTime) < 3*time.Second {
+			m.gracefulShutdown()
+			return m, tea.Quit
+		}
+		m.confirmQuit = true
+		m.quitTime = time.Now()
+		m.setStatus("Press q again to quit")
+		return m, nil
+
+	case "esc", "s":
+		m.showPluginSettings = false
+		return m, nil
+
+	case "up", "k":
+		if m.pluginSettingCursor > 0 {
+			m.pluginSettingCursor--
+		}
+		return m, nil
+
+	case "down", "j":
+		if m.pluginSettingCursor < len(settings)-1 {
+			m.pluginSettingCursor++
+		}
+		return m, nil
+
+	case "enter", " ":
+		// Toggle boolean settings
+		if m.pluginSettingCursor < len(settings) {
+			setting := settings[m.pluginSettingCursor]
+			if setting.Type == "bool" {
+				currentVal := m.pluginManager.GetPluginSetting(p.ID(), setting.Key)
+				newVal := true
+				if b, ok := currentVal.(bool); ok {
+					newVal = !b
+				}
+				m.pluginManager.SetPluginSetting(p.ID(), setting.Key, newVal)
+				p.OnSettingChange(setting.Key, newVal)
+
+				if newVal {
+					m.setStatus(fmt.Sprintf("%s: ON", setting.Name))
+				} else {
+					m.setStatus(fmt.Sprintf("%s: OFF", setting.Name))
 				}
 			}
 		}
@@ -2163,7 +2576,103 @@ func (m Model) handlePluginsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) renderProjectSelector() string {
+	// Title
+	title := lipgloss.NewStyle().
+		Foreground(capBlue).
+		Bold(true).
+		Render("  📁 Select Project")
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, title)
+	lines = append(lines, "")
+	lines = append(lines, mutedStyle.Render(fmt.Sprintf("  Found %d Capacitor projects in this workspace", len(m.projects))))
+	lines = append(lines, "")
+
+	if len(m.projects) == 0 {
+		lines = append(lines, "  "+errorStyle.Render("No Capacitor projects found"))
+		lines = append(lines, "")
+		lines = append(lines, mutedStyle.Render("  Make sure you're in a directory with capacitor.config.ts/js/json"))
+	} else {
+		for i, p := range m.projects {
+			isSelected := i == m.projectCursor
+			isCurrent := m.project != nil && p.RootDir == m.project.RootDir
+
+			// Platform indicators
+			var platforms []string
+			if p.HasIOS {
+				platforms = append(platforms, "iOS")
+			}
+			if p.HasAndroid {
+				platforms = append(platforms, "Android")
+			}
+			platformStr := ""
+			if len(platforms) > 0 {
+				platformStr = " [" + strings.Join(platforms, ", ") + "]"
+			}
+
+			// Get relative path for display
+			cwd, _ := os.Getwd()
+			relPath, err := filepath.Rel(cwd, p.RootDir)
+			if err != nil {
+				relPath = p.RootDir
+			}
+			if relPath == "." {
+				relPath = "(current directory)"
+			} else {
+				relPath = "./" + relPath
+			}
+
+			if isSelected {
+				arrow := lipgloss.NewStyle().Foreground(capBlue).Bold(true).Render("▶")
+				nameStyled := lipgloss.NewStyle().Foreground(capCyan).Bold(true).Render(p.Name)
+				currentMarker := ""
+				if isCurrent {
+					currentMarker = " " + successStyle.Render("(active)")
+				}
+
+				lines = append(lines, fmt.Sprintf(" %s %s%s%s", arrow, nameStyled, mutedStyle.Render(platformStr), currentMarker))
+				lines = append(lines, fmt.Sprintf("      %s", mutedStyle.Render(relPath)))
+				if p.AppID != "" {
+					lines = append(lines, fmt.Sprintf("      %s", mutedStyle.Render("ID: "+p.AppID)))
+				}
+			} else {
+				prefix := "  "
+				name := p.Name
+				currentMarker := ""
+				if isCurrent {
+					currentMarker = " " + successStyle.Render("●")
+				}
+				lines = append(lines, fmt.Sprintf("%s %s%s%s", prefix, name, mutedStyle.Render(platformStr), currentMarker))
+			}
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, helpStyle.Render("  "+
+		helpKeyStyle.Render("↑/↓")+" navigate  "+
+		helpKeyStyle.Render("enter")+" select  "+
+		helpKeyStyle.Render("esc")+" close"))
+
+	return strings.Join(lines, "\n")
+}
+
 func (m *Model) renderPlugins() string {
+	if m.pluginManager == nil {
+		var lines []string
+		lines = append(lines, "")
+		lines = append(lines, "  "+errorStyle.Render("Plugin system not available"))
+		lines = append(lines, "")
+		lines = append(lines, helpStyle.Render("  Press "+helpKeyStyle.Render("esc")+" to close"))
+		return strings.Join(lines, "\n")
+	}
+
+	// If showing plugin settings, render that instead
+	if m.showPluginSettings {
+		return m.renderPluginSettings()
+	}
+
 	// Title
 	title := lipgloss.NewStyle().
 		Foreground(capBlue).
@@ -2176,13 +2685,6 @@ func (m *Model) renderPlugins() string {
 	lines = append(lines, "")
 	lines = append(lines, mutedStyle.Render("  Manage lazycap plugins and extensions"))
 	lines = append(lines, "")
-
-	if m.pluginManager == nil {
-		lines = append(lines, "  "+errorStyle.Render("Plugin system not available"))
-		lines = append(lines, "")
-		lines = append(lines, helpStyle.Render("  Press "+helpKeyStyle.Render("esc")+" to close"))
-		return strings.Join(lines, "\n")
-	}
 
 	allPlugins := plugin.All()
 
@@ -2231,6 +2733,13 @@ func (m *Model) renderPlugins() string {
 					}
 					lines = append(lines, fmt.Sprintf("      %s", mutedStyle.Render("Keys: "+strings.Join(cmdStrs, ", "))))
 				}
+
+				// Show settings count hint
+				settings := p.GetSettings()
+				if len(settings) > 0 {
+					lines = append(lines, fmt.Sprintf("      %s", mutedStyle.Render(fmt.Sprintf("Settings: %d (press s to configure)", len(settings)))))
+				}
+
 				lines = append(lines, "")
 			} else {
 				nameStyled := lipgloss.NewStyle().Foreground(capLight).Render(name)
@@ -2249,8 +2758,128 @@ func (m *Model) renderPlugins() string {
 	helpLine := helpStyle.Render("  ") +
 		helpKeyStyle.Render("↑/↓") + helpStyle.Render(" select  ") +
 		helpKeyStyle.Render("enter") + helpStyle.Render(" start/stop  ") +
+		helpKeyStyle.Render("s") + helpStyle.Render(" settings  ") +
 		helpKeyStyle.Render("e") + helpStyle.Render(" enable/disable  ") +
-		helpKeyStyle.Render("esc") + helpStyle.Render(" close  ") +
+		helpKeyStyle.Render("esc") + helpStyle.Render(" close")
+	lines = append(lines, helpLine)
+
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) renderPluginSettings() string {
+	allPlugins := plugin.All()
+	if m.pluginCursor >= len(allPlugins) {
+		return ""
+	}
+
+	p := allPlugins[m.pluginCursor]
+	settings := p.GetSettings()
+
+	// Title
+	title := lipgloss.NewStyle().
+		Foreground(capBlue).
+		Bold(true).
+		Render(fmt.Sprintf("  ⚙ %s Settings", p.Name()))
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, title)
+	lines = append(lines, "")
+	lines = append(lines, mutedStyle.Render(fmt.Sprintf("  Configure %s plugin options", p.Name())))
+	lines = append(lines, "")
+
+	// Calculate max name width for alignment
+	maxNameWidth := 0
+	for _, s := range settings {
+		if len(s.Name) > maxNameWidth {
+			maxNameWidth = len(s.Name)
+		}
+	}
+	if maxNameWidth > 25 {
+		maxNameWidth = 25
+	}
+	nameStyle := lipgloss.NewStyle().Width(maxNameWidth + 2)
+
+	for i, s := range settings {
+		isSelected := i == m.pluginSettingCursor
+
+		var valueStr string
+		var valueStyle lipgloss.Style
+
+		currentVal := m.pluginManager.GetPluginSetting(p.ID(), s.Key)
+
+		switch s.Type {
+		case "bool":
+			boolVal := false
+			if currentVal != nil {
+				if b, ok := currentVal.(bool); ok {
+					boolVal = b
+				}
+			} else if defVal, ok := s.Default.(bool); ok {
+				boolVal = defVal
+			}
+
+			if boolVal {
+				valueStr = "✓ ON"
+				valueStyle = successStyle
+			} else {
+				valueStr = "○ OFF"
+				valueStyle = mutedStyle
+			}
+		case "string":
+			strVal := ""
+			if currentVal != nil {
+				if str, ok := currentVal.(string); ok {
+					strVal = str
+				}
+			} else if defVal, ok := s.Default.(string); ok {
+				strVal = defVal
+			}
+
+			if strVal == "" {
+				valueStr = "(not set)"
+				valueStyle = mutedStyle
+			} else {
+				if len(strVal) > 20 {
+					strVal = strVal[:17] + "..."
+				}
+				valueStr = strVal
+				valueStyle = lipgloss.NewStyle().Foreground(capCyan)
+			}
+		default:
+			valueStr = fmt.Sprintf("%v", currentVal)
+			valueStyle = mutedStyle
+		}
+
+		name := s.Name
+		if len(name) > 25 {
+			name = name[:22] + "..."
+		}
+
+		nameRendered := nameStyle.Render(name)
+		valueRendered := valueStyle.Render(valueStr)
+
+		if isSelected {
+			// Highlight selected row
+			arrow := lipgloss.NewStyle().Foreground(capBlue).Bold(true).Render("▶")
+			lines = append(lines, fmt.Sprintf(" %s %s  %s", arrow, nameRendered, valueRendered))
+			lines = append(lines, fmt.Sprintf("      %s", mutedStyle.Render(s.Description)))
+		} else {
+			lines = append(lines, fmt.Sprintf("   %s  %s", nameRendered, valueRendered))
+		}
+	}
+
+	// Padding
+	for len(lines) < 18 {
+		lines = append(lines, "")
+	}
+
+	// Help
+	lines = append(lines, "")
+	helpLine := helpStyle.Render("  ") +
+		helpKeyStyle.Render("↑/↓") + helpStyle.Render(" select  ") +
+		helpKeyStyle.Render("enter") + helpStyle.Render(" toggle  ") +
+		helpKeyStyle.Render("esc") + helpStyle.Render(" back  ") +
 		helpKeyStyle.Render("q") + helpStyle.Render(" quit")
 	lines = append(lines, helpLine)
 

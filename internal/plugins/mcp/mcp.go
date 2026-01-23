@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync"
 
-	"lazycap/internal/plugin"
+	"github.com/icarus-itcs/lazycap/internal/plugin"
 )
 
 const (

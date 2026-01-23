@@ -1,4 +1,4 @@
-module lazycap
+module github.com/icarus-itcs/lazycap
 
 go 1.21
 

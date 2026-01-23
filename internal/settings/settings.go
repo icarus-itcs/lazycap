@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Settings contains all user preferences
@@ -107,6 +108,10 @@ type Settings struct {
 	ParallelBuilds      bool   `json:"parallelBuilds"`      // Build platforms in parallel
 	CacheBuilds         bool   `json:"cacheBuilds"`         // Cache build artifacts
 	IncrementalSync     bool   `json:"incrementalSync"`     // Only sync changed files
+
+	// === MCP SERVER ===
+	MCPEnabled          bool              `json:"mcpEnabled"`          // Enable MCP server
+	MCPTools            map[string]bool   `json:"mcpTools"`            // Enabled/disabled state per tool
 }
 
 // DefaultSettings returns settings with sensible defaults
@@ -211,6 +216,10 @@ func DefaultSettings() *Settings {
 		ParallelBuilds:      false,
 		CacheBuilds:         false,
 		IncrementalSync:     false,
+
+		// MCP Server
+		MCPEnabled: true,
+		MCPTools:   make(map[string]bool),
 	}
 }
 
@@ -442,6 +451,22 @@ func GetCategories() []Category {
 				{Key: "cacheBuilds", Name: "Cache Builds", Description: "Cache build artifacts", Type: "bool"},
 			},
 		},
+		{
+			Name: "MCP",
+			Icon: "🤖",
+			Settings: []SettingInfo{
+				{Key: "mcpEnabled", Name: "MCP Server", Description: "Enable MCP server for AI assistants", Type: "bool"},
+				{Key: "mcpTool:list_projects", Name: "list_projects", Description: "List discovered Capacitor projects", Type: "bool"},
+				{Key: "mcpTool:list_devices", Name: "list_devices", Description: "List available devices/emulators", Type: "bool"},
+				{Key: "mcpTool:run_on_device", Name: "run_on_device", Description: "Run app on a device", Type: "bool"},
+				{Key: "mcpTool:sync", Name: "sync", Description: "Sync web assets to native", Type: "bool"},
+				{Key: "mcpTool:build", Name: "build", Description: "Build web assets", Type: "bool"},
+				{Key: "mcpTool:open_ide", Name: "open_ide", Description: "Open native IDE", Type: "bool"},
+				{Key: "mcpTool:get_project", Name: "get_project", Description: "Get project information", Type: "bool"},
+				{Key: "mcpTool:get_debug_actions", Name: "get_debug_actions", Description: "List debug actions", Type: "bool"},
+				{Key: "mcpTool:run_debug_action", Name: "run_debug_action", Description: "Run debug/cleanup actions", Type: "bool"},
+			},
+		},
 	}
 }
 
@@ -531,6 +556,13 @@ func (s *Settings) GetBool(key string) bool {
 		return s.WebOpenBrowser
 	case "webHttps":
 		return s.WebHttps
+	case "mcpEnabled":
+		return s.MCPEnabled
+	}
+	// Check for MCP tool settings (mcpTool:toolname)
+	if strings.HasPrefix(key, "mcpTool:") {
+		toolName := strings.TrimPrefix(key, "mcpTool:")
+		return s.IsMCPToolEnabled(toolName)
 	}
 	return false
 }
@@ -612,6 +644,14 @@ func (s *Settings) SetBool(key string, value bool) {
 		s.WebOpenBrowser = value
 	case "webHttps":
 		s.WebHttps = value
+	case "mcpEnabled":
+		s.MCPEnabled = value
+	default:
+		// Check for MCP tool settings (mcpTool:toolname)
+		if strings.HasPrefix(key, "mcpTool:") {
+			toolName := strings.TrimPrefix(key, "mcpTool:")
+			s.SetMCPToolEnabled(toolName, value)
+		}
 	}
 }
 
@@ -821,4 +861,70 @@ func (s *Settings) CycleChoice(key string, choices []string) string {
 // ConfigPath returns the path to the config file
 func ConfigPath() (string, error) {
 	return configPath()
+}
+
+// MCP Tool settings helpers
+
+// AllMCPTools returns the list of all available MCP tools
+func AllMCPTools() []string {
+	return []string{
+		"list_projects",
+		"list_devices",
+		"run_on_device",
+		"sync",
+		"build",
+		"open_ide",
+		"get_project",
+		"get_debug_actions",
+		"run_debug_action",
+	}
+}
+
+// IsMCPToolEnabled checks if a specific MCP tool is enabled
+func (s *Settings) IsMCPToolEnabled(tool string) bool {
+	if !s.MCPEnabled {
+		return false
+	}
+	// If the tool hasn't been explicitly set, default to enabled
+	if enabled, exists := s.MCPTools[tool]; exists {
+		return enabled
+	}
+	return true // Default to enabled
+}
+
+// SetMCPToolEnabled enables or disables a specific MCP tool
+func (s *Settings) SetMCPToolEnabled(tool string, enabled bool) {
+	if s.MCPTools == nil {
+		s.MCPTools = make(map[string]bool)
+	}
+	s.MCPTools[tool] = enabled
+}
+
+// GetEnabledMCPTools returns a list of all enabled MCP tools
+func (s *Settings) GetEnabledMCPTools() []string {
+	if !s.MCPEnabled {
+		return nil
+	}
+	var enabled []string
+	for _, tool := range AllMCPTools() {
+		if s.IsMCPToolEnabled(tool) {
+			enabled = append(enabled, tool)
+		}
+	}
+	return enabled
+}
+
+// GetMCPToolCount returns (enabled count, total count) for MCP tools
+func (s *Settings) GetMCPToolCount() (int, int) {
+	all := AllMCPTools()
+	if !s.MCPEnabled {
+		return 0, len(all)
+	}
+	enabled := 0
+	for _, tool := range all {
+		if s.IsMCPToolEnabled(tool) {
+			enabled++
+		}
+	}
+	return enabled, len(all)
 }
