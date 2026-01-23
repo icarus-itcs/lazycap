@@ -1,0 +1,64 @@
+Icarus Source Available License
+Version 1.0
+
+Copyright (c) 2025 Icarus, Inc.
+
+TERMS AND CONDITIONS
+
+1. GRANT OF LICENSE
+
+Subject to the terms and conditions of this License, Icarus, Inc. ("Licensor")
+hereby grants you a worldwide, royalty-free, non-exclusive license to:
+
+   a) Use the Software for personal, educational, and commercial purposes
+   b) Copy and distribute verbatim copies of the Software
+   c) Modify the Software for your own use
+   d) Contribute modifications back to the original project
+
+2. RESTRICTIONS
+
+You may NOT:
+
+   a) Sell, sublicense, or charge fees for the Software or any derivative works
+   b) Offer the Software as a commercial service or product
+   c) Create competing commercial products substantially derived from this Software
+   d) Remove, alter, or obscure any licensing, copyright, or attribution notices
+   e) Use the Licensor's name, logo, or trademarks without prior written permission
+
+3. ATTRIBUTION
+
+You must retain all copyright, patent, trademark, and attribution notices from
+the source code and documentation. Any distribution must include a copy of this
+License.
+
+4. CONTRIBUTIONS
+
+By submitting contributions to this project, you agree to license your
+contributions under the same terms as this License, and you represent that you
+have the right to do so.
+
+5. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE AUTHORS, COPYRIGHT HOLDERS, OR ICARUS, INC. BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
+OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+6. TERMINATION
+
+This License automatically terminates if you violate any of its terms. Upon
+termination, you must destroy all copies of the Software in your possession.
+
+7. GOVERNING LAW
+
+This License shall be governed by and construed in accordance with the laws
+of the State of Delaware, United States, without regard to its conflict of
+law provisions.
+
+---
+
+For questions about licensing, contact: legal@icarus.inc
