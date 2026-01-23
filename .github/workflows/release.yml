@@ -44,18 +44,54 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
-          - os: ubuntu-latest
-            goos: linux
-            goarch: arm64
+          # macOS
           - os: macos-latest
             goos: darwin
             goarch: amd64
+            name: macos-intel
           - os: macos-latest
             goos: darwin
             goarch: arm64
+            name: macos-apple-silicon
+          # Linux
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            name: linux-64bit
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            name: linux-arm64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: 386
+            name: linux-32bit
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm
+            goarm: 7
+            name: linux-armv7
+          # Windows
+          - os: ubuntu-latest
+            goos: windows
+            goarch: amd64
+            name: windows-64bit
+            ext: .exe
+          - os: ubuntu-latest
+            goos: windows
+            goarch: arm64
+            name: windows-arm64
+            ext: .exe
+          - os: ubuntu-latest
+            goos: windows
+            goarch: 386
+            name: windows-32bit
+            ext: .exe
+          # FreeBSD
+          - os: ubuntu-latest
+            goos: freebsd
+            goarch: amd64
+            name: freebsd-64bit
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,17 +107,26 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: 0
         run: |
           VERSION=${{ needs.tag.outputs.version }}
-          go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o lazycap .
-          tar -czvf lazycap_${VERSION#v}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz lazycap
+          BINARY_NAME="lazycap${{ matrix.ext }}"
+          go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o ${BINARY_NAME} .
+
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip lazycap_${VERSION#v}_${{ matrix.goos }}_${{ matrix.goarch }}.zip ${BINARY_NAME}
+          else
+            tar -czvf lazycap_${VERSION#v}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz ${BINARY_NAME}
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: lazycap_${{ matrix.goos }}_${{ matrix.goarch }}
-          path: "*.tar.gz"
+          path: |
+            *.tar.gz
+            *.zip
 
   release:
     needs: [tag, build]
@@ -93,12 +138,51 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.tag.outputs.version }}
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
           generate_release_notes: true
+          body: |
+            ## Installation
+
+            **macOS (Apple Silicon):**
+            ```bash
+            curl -sL https://github.com/icarus-itcs/lazycap/releases/download/${{ needs.tag.outputs.version }}/lazycap_${{ needs.tag.outputs.version }}_darwin_arm64.tar.gz | tar xz
+            sudo mv lazycap /usr/local/bin/
+            ```
+
+            **macOS (Intel):**
+            ```bash
+            curl -sL https://github.com/icarus-itcs/lazycap/releases/download/${{ needs.tag.outputs.version }}/lazycap_${{ needs.tag.outputs.version }}_darwin_amd64.tar.gz | tar xz
+            sudo mv lazycap /usr/local/bin/
+            ```
+
+            **Linux (64-bit):**
+            ```bash
+            curl -sL https://github.com/icarus-itcs/lazycap/releases/download/${{ needs.tag.outputs.version }}/lazycap_${{ needs.tag.outputs.version }}_linux_amd64.tar.gz | tar xz
+            sudo mv lazycap /usr/local/bin/
+            ```
+
+            **Go Install:**
+            ```bash
+            go install github.com/icarus-itcs/lazycap@latest
+            ```
+
+            **Homebrew:**
+            ```bash
+            brew tap icarus-itcs/lazycap https://github.com/icarus-itcs/lazycap
+            brew install lazycap
+            ```
 
   update-formula:
     needs: [tag, release]
