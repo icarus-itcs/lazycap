@@ -62,7 +62,7 @@ make install
 
 ```bash
 brew tap icarus-itcs/lazycap https://github.com/icarus-itcs/lazycap
-brew install lazycap --HEAD
+brew install lazycap
 ```
 
 ## Requirements
