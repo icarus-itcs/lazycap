@@ -65,6 +65,20 @@ brew tap icarus-itcs/lazycap https://github.com/icarus-itcs/lazycap
 brew install lazycap
 ```
 
+## Platform Support
+
+| Platform | Architecture | Status |
+|----------|--------------|--------|
+| macOS | Apple Silicon (arm64) | ✅ Tested |
+| macOS | Intel (amd64) | 🔨 Untested |
+| Linux | 64-bit (amd64) | 🔨 Untested |
+| Linux | ARM64 | 🔨 Untested |
+| Linux | 32-bit / ARMv7 | 🔨 Untested |
+| Windows | 64-bit / ARM64 | 🔨 Untested |
+| FreeBSD | 64-bit | 🔨 Untested |
+
+*Help us test! If you've confirmed lazycap works on your platform, [open an issue](https://github.com/icarus-itcs/lazycap/issues) to let us know.*
+
 ## Requirements
 
 - **Go 1.21+** (for building from source)
