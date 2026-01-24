@@ -2,7 +2,9 @@ package preflight
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -26,9 +28,18 @@ const (
 	StatusError
 )
 
+// Discovery represents a discovered project or configuration
+type Discovery struct {
+	Type    string // "capacitor", "firebase", "ionic", etc.
+	Name    string
+	Path    string
+	Details string
+}
+
 // Results contains all preflight check results
 type Results struct {
 	Checks      []CheckResult
+	Discoveries []Discovery
 	HasErrors   bool
 	HasWarnings bool
 	Version     string
@@ -62,8 +73,14 @@ var requiredTools = []RequiredTool{
 
 // Run executes all preflight checks
 func Run() *Results {
+	return RunAt("")
+}
+
+// RunAt executes all preflight checks from a specific directory
+func RunAt(baseDir string) *Results {
 	results := &Results{
-		Checks: make([]CheckResult, 0),
+		Checks:      make([]CheckResult, 0),
+		Discoveries: make([]Discovery, 0),
 	}
 
 	// Check each required tool
@@ -90,6 +107,9 @@ func Run() *Results {
 	if capResult.Status == StatusError {
 		results.HasErrors = true
 	}
+
+	// Discover projects and configurations
+	results.Discoveries = discoverProjects(baseDir)
 
 	return results
 }
@@ -254,4 +274,184 @@ func (r *Results) VersionCheck() CheckResult {
 	}
 
 	return result
+}
+
+// discoverProjects finds Capacitor projects, Firebase configs, etc.
+func discoverProjects(baseDir string) []Discovery {
+	var discoveries []Discovery //nolint:prealloc // size unknown, grows dynamically
+
+	if baseDir == "" {
+		var err error
+		baseDir, err = os.Getwd()
+		if err != nil {
+			return discoveries
+		}
+	}
+
+	// Walk directory tree (max 4 levels deep)
+	discoveries = append(discoveries, walkForDiscoveries(baseDir, 0, 4)...)
+
+	return discoveries
+}
+
+func walkForDiscoveries(dir string, depth, maxDepth int) []Discovery {
+	discoveries := make([]Discovery, 0)
+
+	if depth > maxDepth {
+		return discoveries
+	}
+
+	// Check for Capacitor project
+	capConfigs := []string{"capacitor.config.ts", "capacitor.config.js", "capacitor.config.json"}
+	for _, cfg := range capConfigs {
+		configPath := filepath.Join(dir, cfg)
+		if _, err := os.Stat(configPath); err == nil {
+			name := getProjectName(dir)
+			details := cfg
+			// Check for platforms
+			var platforms []string
+			if _, err := os.Stat(filepath.Join(dir, "ios")); err == nil {
+				platforms = append(platforms, "ios")
+			}
+			if _, err := os.Stat(filepath.Join(dir, "android")); err == nil {
+				platforms = append(platforms, "android")
+			}
+			if len(platforms) > 0 {
+				details += " [" + strings.Join(platforms, ", ") + "]"
+			}
+			discoveries = append(discoveries, Discovery{
+				Type:    "capacitor",
+				Name:    name,
+				Path:    dir,
+				Details: details,
+			})
+			break
+		}
+	}
+
+	// Check for Firebase
+	firebasePath := filepath.Join(dir, "firebase.json")
+	if _, err := os.Stat(firebasePath); err == nil {
+		name := filepath.Base(dir)
+		details := detectFirebaseServices(firebasePath)
+		discoveries = append(discoveries, Discovery{
+			Type:    "firebase",
+			Name:    name,
+			Path:    dir,
+			Details: details,
+		})
+	}
+
+	// Check for Ionic
+	ionicPath := filepath.Join(dir, "ionic.config.json")
+	if _, err := os.Stat(ionicPath); err == nil {
+		name := filepath.Base(dir)
+		discoveries = append(discoveries, Discovery{
+			Type:    "ionic",
+			Name:    name,
+			Path:    dir,
+			Details: "ionic.config.json",
+		})
+	}
+
+	// Check for Vite
+	viteConfigs := []string{"vite.config.ts", "vite.config.js", "vite.config.mjs"}
+	for _, cfg := range viteConfigs {
+		vitePath := filepath.Join(dir, cfg)
+		if _, err := os.Stat(vitePath); err == nil {
+			// Only add if not already discovered as capacitor (to avoid duplicates)
+			hasCapacitor := false
+			for _, d := range discoveries {
+				if d.Type == "capacitor" && d.Path == dir {
+					hasCapacitor = true
+					break
+				}
+			}
+			if !hasCapacitor {
+				discoveries = append(discoveries, Discovery{
+					Type:    "vite",
+					Name:    filepath.Base(dir),
+					Path:    dir,
+					Details: cfg,
+				})
+			}
+			break
+		}
+	}
+
+	// Recurse into subdirectories
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return discoveries
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Skip common non-project directories
+		if name == "node_modules" || name == ".git" || name == "dist" || name == "build" ||
+			name == "ios" || name == "android" || name == ".firebase" || name == "Pods" ||
+			strings.HasPrefix(name, ".") {
+			continue
+		}
+		subDiscoveries := walkForDiscoveries(filepath.Join(dir, name), depth+1, maxDepth)
+		discoveries = append(discoveries, subDiscoveries...)
+	}
+
+	return discoveries
+}
+
+func getProjectName(dir string) string {
+	// Try to get name from package.json
+	pkgPath := filepath.Join(dir, "package.json")
+	if data, err := os.ReadFile(pkgPath); err == nil {
+		// Simple JSON parsing for name field
+		content := string(data)
+		if idx := strings.Index(content, `"name"`); idx != -1 {
+			rest := content[idx+6:]
+			if colonIdx := strings.Index(rest, `"`); colonIdx != -1 {
+				rest = rest[colonIdx+1:]
+				if endIdx := strings.Index(rest, `"`); endIdx != -1 {
+					return rest[:endIdx]
+				}
+			}
+		}
+	}
+	return filepath.Base(dir)
+}
+
+func detectFirebaseServices(configPath string) string {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "firebase.json"
+	}
+
+	content := string(data)
+	var services []string
+
+	if strings.Contains(content, `"hosting"`) {
+		services = append(services, "hosting")
+	}
+	if strings.Contains(content, `"functions"`) {
+		services = append(services, "functions")
+	}
+	if strings.Contains(content, `"firestore"`) {
+		services = append(services, "firestore")
+	}
+	if strings.Contains(content, `"storage"`) {
+		services = append(services, "storage")
+	}
+	if strings.Contains(content, `"emulators"`) {
+		services = append(services, "emulators")
+	}
+	if strings.Contains(content, `"auth"`) {
+		services = append(services, "auth")
+	}
+
+	if len(services) > 0 {
+		return strings.Join(services, ", ")
+	}
+	return "firebase.json"
 }

@@ -7,8 +7,13 @@ import (
 	"strings"
 )
 
+// LocalConfigName is the filename for per-project config
+const LocalConfigName = ".lazycap.json"
+
 // Settings contains all user preferences
 type Settings struct {
+	// Internal: tracks which config file is being used (not serialized)
+	configPath string `json:"-"`
 	// === RUN OPTIONS ===
 	LiveReloadDefault bool   `json:"liveReloadDefault"` // Enable live reload by default
 	ExternalHost      string `json:"externalHost"`      // External IP for live reload (empty = auto)
@@ -223,7 +228,7 @@ func DefaultSettings() *Settings {
 	}
 }
 
-// configDir returns the config directory path
+// configDir returns the global config directory path
 func configDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -232,8 +237,8 @@ func configDir() (string, error) {
 	return filepath.Join(home, ".config", "lazycap"), nil
 }
 
-// configPath returns the full path to the settings file
-func configPath() (string, error) {
+// globalConfigPath returns the full path to the global settings file
+func globalConfigPath() (string, error) {
 	dir, err := configDir()
 	if err != nil {
 		return "", err
@@ -241,43 +246,110 @@ func configPath() (string, error) {
 	return filepath.Join(dir, "settings.json"), nil
 }
 
-// Load loads settings from disk, returning defaults if not found
-func Load() (*Settings, error) {
-	path, err := configPath()
+// localConfigPath returns the local config path for the given directory
+func localConfigPath(dir string) string {
+	return filepath.Join(dir, LocalConfigName)
+}
+
+// findConfigPath looks for a local config first, then falls back to global
+func findConfigPath() (string, bool, error) {
+	// Check for local config in current directory
+	cwd, err := os.Getwd()
+	if err == nil {
+		localPath := localConfigPath(cwd)
+		if _, err := os.Stat(localPath); err == nil {
+			return localPath, true, nil
+		}
+	}
+
+	// Fall back to global config
+	globalPath, err := globalConfigPath()
 	if err != nil {
-		return DefaultSettings(), err
+		return "", false, err
+	}
+	return globalPath, false, nil
+}
+
+// Load loads settings from disk, checking local config first then global
+func Load() (*Settings, error) {
+	return LoadAt("")
+}
+
+// LoadAt loads settings from a specific directory, or uses cwd if empty
+func LoadAt(dir string) (*Settings, error) {
+	var path string
+	var isLocal bool
+
+	if dir != "" {
+		// Check for local config in the specified directory
+		localPath := localConfigPath(dir)
+		if _, err := os.Stat(localPath); err == nil {
+			path = localPath
+			isLocal = true
+		}
+	}
+
+	// If no local config found, use the standard lookup
+	if path == "" {
+		var err error
+		path, isLocal, err = findConfigPath()
+		if err != nil {
+			settings := DefaultSettings()
+			settings.configPath = path
+			return settings, err
+		}
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return DefaultSettings(), nil
+			settings := DefaultSettings()
+			// For new settings, default to local config in cwd
+			if dir != "" {
+				settings.configPath = localConfigPath(dir)
+			} else if cwd, err := os.Getwd(); err == nil {
+				settings.configPath = localConfigPath(cwd)
+			} else {
+				settings.configPath = path
+			}
+			return settings, nil
 		}
-		return DefaultSettings(), err
+		settings := DefaultSettings()
+		settings.configPath = path
+		return settings, err
 	}
 
 	settings := DefaultSettings()
 	if err := json.Unmarshal(data, settings); err != nil {
+		settings.configPath = path
 		return DefaultSettings(), err
 	}
 
+	settings.configPath = path
+	_ = isLocal // Used for debugging if needed
 	return settings, nil
 }
 
-// Save saves settings to disk
+// Save saves settings to disk (to the config file that was loaded)
 func (s *Settings) Save() error {
-	dir, err := configDir()
-	if err != nil {
-		return err
+	path := s.configPath
+	if path == "" {
+		// Default to local config in cwd
+		if cwd, err := os.Getwd(); err == nil {
+			path = localConfigPath(cwd)
+		} else {
+			// Fall back to global config
+			var err error
+			path, err = globalConfigPath()
+			if err != nil {
+				return err
+			}
+		}
 	}
 
-	// Create config directory if it doesn't exist
+	// Create parent directory if it doesn't exist (for global config)
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	path, err := configPath()
-	if err != nil {
 		return err
 	}
 
@@ -287,6 +359,55 @@ func (s *Settings) Save() error {
 	}
 
 	return os.WriteFile(path, data, 0644)
+}
+
+// SaveTo saves settings to a specific path
+func (s *Settings) SaveTo(path string) error {
+	// Create parent directory if needed
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return err
+	}
+
+	// Update the tracked path
+	s.configPath = path
+	return nil
+}
+
+// SaveToLocal saves settings to a local config file in the specified directory
+func (s *Settings) SaveToLocal(dir string) error {
+	return s.SaveTo(localConfigPath(dir))
+}
+
+// SaveToGlobal saves settings to the global config file
+func (s *Settings) SaveToGlobal() error {
+	path, err := globalConfigPath()
+	if err != nil {
+		return err
+	}
+	return s.SaveTo(path)
+}
+
+// GetConfigPath returns the path to the currently loaded config file
+func (s *Settings) GetConfigPath() string {
+	return s.configPath
+}
+
+// IsLocalConfig returns true if the current config is a local (per-project) config
+func (s *Settings) IsLocalConfig() bool {
+	if s.configPath == "" {
+		return false
+	}
+	return filepath.Base(s.configPath) == LocalConfigName
 }
 
 // Category represents a group of settings
@@ -465,6 +586,8 @@ func GetCategories() []Category {
 				{Key: "mcpTool:get_project", Name: "get_project", Description: "Get project information", Type: "bool"},
 				{Key: "mcpTool:get_debug_actions", Name: "get_debug_actions", Description: "List debug actions", Type: "bool"},
 				{Key: "mcpTool:run_debug_action", Name: "run_debug_action", Description: "Run debug/cleanup actions", Type: "bool"},
+				{Key: "mcpTool:get_all_logs", Name: "get_all_logs", Description: "Get logs with filtering", Type: "bool"},
+				{Key: "mcpTool:run_command", Name: "run_command", Description: "Run shell commands in project", Type: "bool"},
 			},
 		},
 	}
@@ -863,9 +986,25 @@ func (s *Settings) CycleChoice(key string, choices []string) string {
 	return ""
 }
 
-// ConfigPath returns the path to the config file
+// ConfigPath returns the path to the global config file (for backwards compatibility)
 func ConfigPath() (string, error) {
-	return configPath()
+	return globalConfigPath()
+}
+
+// GlobalConfigPath returns the path to the global config file
+func GlobalConfigPath() (string, error) {
+	return globalConfigPath()
+}
+
+// LocalConfigPath returns the local config path for the given directory
+func LocalConfigPath(dir string) string {
+	return localConfigPath(dir)
+}
+
+// InitLocalConfig creates a local config file in the specified directory
+// with the current settings, and updates the settings to use this local path
+func (s *Settings) InitLocalConfig(dir string) error {
+	return s.SaveToLocal(dir)
 }
 
 // MCP Tool settings helpers
@@ -882,6 +1021,8 @@ func AllMCPTools() []string {
 		"get_project",
 		"get_debug_actions",
 		"run_debug_action",
+		"get_all_logs",
+		"run_command",
 	}
 }
 

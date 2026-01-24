@@ -326,7 +326,16 @@ Plugins can access devices, processes, logs, settings, debug actions, and the ev
 
 ### Settings File
 
-Settings are stored in `~/.config/lazycap/settings.json`. Press `,` to open the settings panel.
+lazycap supports both per-project and global settings:
+
+| Location | File | Priority |
+|----------|------|----------|
+| **Per-project** | `.lazycap.json` in current directory | Checked first |
+| **Global** | `~/.config/lazycap/settings.json` | Fallback |
+
+When you modify settings, they're saved to the currently loaded config file (shown at the bottom of the settings panel). New settings default to per-project config in the current directory.
+
+Press `,` to open the settings panel.
 
 ### Run Options
 

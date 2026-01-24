@@ -480,6 +480,45 @@ func handleToolsList(ctx *mcpContext) map[string]interface{} {
 				"required": []string{"actionId"},
 			},
 		},
+		{
+			"name":        "get_all_logs",
+			"description": "Get logs from lazycap debug log file. Use this to diagnose build errors, runtime issues, or understand what happened. Supports filtering by text search and limiting output.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"search": map[string]interface{}{
+						"type":        "string",
+						"description": "Search for text pattern in logs (case-insensitive)",
+					},
+					"errors_only": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Only return lines containing error indicators (error, failed, exception, panic, fatal)",
+					},
+					"tail": map[string]interface{}{
+						"type":        "integer",
+						"description": "Number of lines to return from end of log (default: 100)",
+					},
+				},
+			},
+		},
+		{
+			"name":        "run_command",
+			"description": "Run a shell command in a Capacitor project directory and return the output. Use for npm commands, checking files, or running custom scripts.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"project": map[string]interface{}{
+						"type":        "string",
+						"description": "Project name or path (from list_projects). Optional if only one project exists.",
+					},
+					"command": map[string]interface{}{
+						"type":        "string",
+						"description": "Shell command to run",
+					},
+				},
+				"required": []string{"command"},
+			},
+		},
 	}
 
 	// Filter tools based on settings
@@ -644,9 +683,112 @@ func handleToolsCall(ctx *mcpContext, params json.RawMessage) (interface{}, *mcp
 		}
 		return mcpContent(result.Message), nil
 
+	case "get_all_logs":
+		return handleGetAllLogs(call.Arguments)
+
+	case "run_command":
+		return handleRunCommand(ctx, call.Arguments)
+
 	default:
 		return nil, &mcpError{Code: -32601, Message: "Unknown tool: " + call.Name}
 	}
+}
+
+// handleGetAllLogs reads and filters the lazycap debug log
+func handleGetAllLogs(args map[string]interface{}) (interface{}, *mcpError) {
+	logPath := "/tmp/lazycap-debug.log"
+
+	// Read log file
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return mcpContent("No debug log found at " + logPath + ". Run lazycap TUI first to generate logs."), nil
+		}
+		return nil, &mcpError{Code: -32000, Message: "Failed to read log: " + err.Error()}
+	}
+
+	lines := strings.Split(string(data), "\n")
+
+	// Parse filter arguments
+	searchPattern, _ := args["search"].(string)
+	errorsOnly, _ := args["errors_only"].(bool)
+	tail := 100 // default
+	if t, ok := args["tail"].(float64); ok {
+		tail = int(t)
+	}
+
+	// Error patterns for errors_only filter
+	errorPatterns := []string{"error", "Error", "ERROR", "failed", "Failed", "FAILED", "exception", "Exception", "panic", "Panic", "fatal", "Fatal"}
+
+	// Apply filters
+	var filtered []string
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		// Apply search filter
+		if searchPattern != "" && !containsIgnoreCase(line, searchPattern) {
+			continue
+		}
+
+		// Apply errors_only filter
+		if errorsOnly {
+			hasError := false
+			for _, pattern := range errorPatterns {
+				if strings.Contains(line, pattern) {
+					hasError = true
+					break
+				}
+			}
+			if !hasError {
+				continue
+			}
+		}
+
+		filtered = append(filtered, line)
+	}
+
+	// Apply tail limit
+	if tail > 0 && len(filtered) > tail {
+		filtered = filtered[len(filtered)-tail:]
+	}
+
+	if len(filtered) == 0 {
+		return mcpContent("No matching log entries found."), nil
+	}
+
+	return mcpContent(strings.Join(filtered, "\n")), nil
+}
+
+// handleRunCommand runs a shell command in the project directory
+func handleRunCommand(ctx *mcpContext, args map[string]interface{}) (interface{}, *mcpError) {
+	projectName, _ := args["project"].(string)
+	command, _ := args["command"].(string)
+
+	if command == "" {
+		return nil, &mcpError{Code: -32602, Message: "command required"}
+	}
+
+	// Get working directory
+	workDir := ""
+	project := ctx.getProject(projectName)
+	if project != nil {
+		workDir = project.RootDir
+	}
+
+	// Run command
+	output, err := cap.RunShellCommand(workDir, command)
+	if err != nil {
+		return mcpContent(fmt.Sprintf("Command failed: %s\n\nOutput:\n%s", err.Error(), output)), nil
+	}
+
+	return mcpContent(output), nil
+}
+
+// containsIgnoreCase checks if s contains substr (case-insensitive)
+func containsIgnoreCase(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
 
 func mcpContent(text string) map[string]interface{} {

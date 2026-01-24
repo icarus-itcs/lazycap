@@ -845,3 +845,14 @@ func KillPort(port int) bool {
 	}
 	return killed
 }
+
+// RunShellCommand runs a shell command in the specified directory and returns output
+func RunShellCommand(dir string, command string) (string, error) {
+	cmd := exec.Command("sh", "-c", command)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}

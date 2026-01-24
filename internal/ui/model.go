@@ -117,10 +117,13 @@ type Model struct {
 	showPreflight    bool
 
 	// Settings
-	settings         *settings.Settings
-	showSettings     bool
-	settingsCursor   int
-	settingsCategory int
+	settings            *settings.Settings
+	showSettings        bool
+	settingsCursor      int
+	settingsCategory    int
+	editingSettingKey   string // Key of setting being edited (empty = not editing)
+	editingSettingValue string // Current text value being edited
+	editingSettingType  string // Type of setting being edited (string/int)
 
 	// Plugins
 	pluginManager       *plugin.Manager
@@ -661,6 +664,28 @@ func (m *Model) getSelectedProcess() *Process {
 	return m.processes[m.selectedProcess]
 }
 
+// removeProcess removes a process from the list by ID
+func (m *Model) removeProcess(processID string) {
+	for i, p := range m.processes {
+		if p.ID == processID {
+			// Close the output channel if it exists
+			if ch, ok := m.outputChans[processID]; ok {
+				close(ch)
+				delete(m.outputChans, processID)
+			}
+			// Remove from slice
+			m.processes = append(m.processes[:i], m.processes[i+1:]...)
+			// Adjust selected index if needed
+			if m.selectedProcess >= len(m.processes) && m.selectedProcess > 0 {
+				m.selectedProcess--
+			}
+			// Update viewport
+			m.updateLogViewport()
+			return
+		}
+	}
+}
+
 func (m *Model) hasRunningProcesses() bool {
 	for _, p := range m.processes {
 		if p.Status == ProcessRunning {
@@ -953,12 +978,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keys.Kill):
 			p := m.getSelectedProcess()
-			if p != nil && p.Status == ProcessRunning && p.Cmd != nil && p.Cmd.Process != nil {
-				_ = p.Cmd.Process.Kill()
-				p.Status = ProcessCancelled
-				p.EndTime = time.Now()
-				p.AddLog("Killed by user")
-				m.updateLogViewport()
+			if p != nil {
+				// Kill the process if running
+				if p.Status == ProcessRunning && p.Cmd != nil && p.Cmd.Process != nil {
+					_ = p.Cmd.Process.Kill()
+				}
+				// Remove the process from the list (remove the tab)
+				m.removeProcess(p.ID)
+				m.setStatus(fmt.Sprintf("Removed %s", p.Name))
 			}
 			return m, nil
 
@@ -1147,13 +1174,14 @@ func (m *Model) updateLayout() {
 	if m.width == 0 || m.height == 0 {
 		return
 	}
-	logWidth := m.width - 36 - 6
-	logHeight := m.height - 9 // Account for header + status bar
-	if logHeight < 5 {
-		logHeight = 5
+	paneWidth := m.width - 36 - 6
+	paneHeight := m.height - 9 // Account for header + status bar
+	if paneHeight < 5 {
+		paneHeight = 5
 	}
-	m.logViewport.Width = logWidth
-	m.logViewport.Height = logHeight
+	// Match renderRight() viewport sizing: account for border (2) + tab bar (1)
+	m.logViewport.Width = paneWidth - 4
+	m.logViewport.Height = paneHeight - 3
 }
 
 func (m *Model) updateLogViewport() {
@@ -1162,7 +1190,12 @@ func (m *Model) updateLogViewport() {
 		m.logViewport.SetContent(logEmptyStyle.Render("\n  Run a command to see output here..."))
 		return
 	}
-	m.logViewport.SetContent(strings.Join(p.Logs, "\n"))
+	// Pre-wrap content to viewport width so line count matches visual height
+	content := strings.Join(p.Logs, "\n")
+	if m.logViewport.Width > 0 {
+		content = lipgloss.NewStyle().Width(m.logViewport.Width).Render(content)
+	}
+	m.logViewport.SetContent(content)
 	m.logViewport.GotoBottom()
 }
 
@@ -1197,6 +1230,14 @@ func (m *Model) createProcess(name, command string) *Process {
 	m.selectedProcess = len(m.processes) - 1
 	m.updateLogViewport()
 	return p
+}
+
+// getProjectDir returns the current project's root directory, or empty string if not set
+func (m *Model) getProjectDir() string {
+	if m.project != nil {
+		return m.project.RootDir
+	}
+	return ""
 }
 
 func (m *Model) runAction(action string, liveReload bool) tea.Cmd {
@@ -1266,16 +1307,73 @@ func (m *Model) startRunCommand(dev *device.Device, liveReload bool) tea.Cmd {
 
 	name := shortName
 	args := []string{"cap", "run", dev.Platform, "--target", dev.ID}
+
 	if liveReload {
 		args = append(args, "-l")
-		// Get host from settings if configured
-		if host := m.settings.GetString("webHost"); host != "" {
+
+		// Get port and host from settings
+		port := m.settings.GetInt("liveReloadPort")
+		host := m.settings.GetString("externalHost")
+
+		if port > 0 {
+			args = append(args, "--port", fmt.Sprintf("%d", port))
+		}
+		if host != "" {
 			args = append(args, "--host", host)
 		}
 		name = shortName + " (live)"
+
+		// For live reload, we need to start the dev server AND the cap run command
+		// Start dev server first, then run cap command
+		p := m.createProcess(name, "vite + cap run")
+		projectDir := m.getProjectDir()
+
+		// Kill any existing process on the port first
+		if port > 0 {
+			if cap.KillPort(port) {
+				p.AddLog(fmt.Sprintf("Killed existing process on port %d", port))
+			}
+		}
+
+		return func() tea.Msg {
+			ch := make(chan string, 100)
+
+			// Build the combined command that starts vite in background and then runs cap
+			viteHost := "0.0.0.0" // Bind to all interfaces for external access
+			if host != "" {
+				viteHost = host
+			}
+
+			// Command: start vite in background, wait for it, then run cap
+			// Use /bin/sleep for macOS compatibility
+			cmdStr := fmt.Sprintf(
+				"npx vite --host %s --port %d --strictPort & VITE_PID=$!; /bin/sleep 3; npx %s; kill $VITE_PID 2>/dev/null",
+				viteHost,
+				port,
+				strings.Join(args, " "),
+			)
+
+			shell := os.Getenv("SHELL")
+			if shell == "" {
+				shell = "/bin/zsh"
+			}
+
+			shellCmd := fmt.Sprintf("source ~/.zshrc 2>/dev/null; source ~/.zprofile 2>/dev/null; %s", cmdStr)
+			cmd := exec.Command(shell, "-c", shellCmd)
+			cmd.Env = os.Environ()
+
+			if projectDir != "" {
+				cmd.Dir = projectDir
+			} else if cwd, err := os.Getwd(); err == nil {
+				cmd.Dir = cwd
+			}
+
+			return runCmdWithPipes(p.ID, cmd, ch)
+		}
 	}
+
 	p := m.createProcess(name, "npx "+strings.Join(args, " "))
-	return runCmd(p.ID, "npx", args...)
+	return runCmd(p.ID, m.getProjectDir(), "npx", args...)
 }
 
 func (m *Model) startSyncCommand(platform string) tea.Cmd {
@@ -1284,22 +1382,22 @@ func (m *Model) startSyncCommand(platform string) tea.Cmd {
 		args = append(args, platform)
 	}
 	p := m.createProcess("Sync", "npx "+strings.Join(args, " "))
-	return runCmd(p.ID, "npx", args...)
+	return runCmd(p.ID, m.getProjectDir(), "npx", args...)
 }
 
 func (m *Model) startBuildCommand() tea.Cmd {
 	p := m.createProcess("Build", "npm run build")
-	return runCmd(p.ID, "npm", "run", "build")
+	return runCmd(p.ID, m.getProjectDir(), "npm", "run", "build")
 }
 
 func (m *Model) startOpenCommand(platform string) tea.Cmd {
 	p := m.createProcess("Open", "npx cap open "+platform)
-	return runCmd(p.ID, "npx", "cap", "open", platform)
+	return runCmd(p.ID, m.getProjectDir(), "npx", "cap", "open", platform)
 }
 
 func (m *Model) startUpgrade() tea.Cmd {
 	p := m.createProcess("Upgrade", "npm install @capacitor/core@latest @capacitor/cli@latest")
-	return runCmd(p.ID, "npm", "install", "@capacitor/core@latest", "@capacitor/cli@latest")
+	return runCmd(p.ID, m.getProjectDir(), "npm", "install", "@capacitor/core@latest", "@capacitor/cli@latest")
 }
 
 func (m *Model) startWebDevCommand() tea.Cmd {
@@ -1343,10 +1441,10 @@ func (m *Model) startWebDevCommand() tea.Cmd {
 
 	// Run the command directly - let the dev server use its own defaults
 	// The command should be the full command like "npm run dev" or "npx vite"
-	return runWebCmd(p.ID, command, port, host)
+	return runWebCmd(p.ID, m.getProjectDir(), command, port, host)
 }
 
-func runCmd(processID, name string, args ...string) tea.Cmd {
+func runCmd(processID, workDir, name string, args ...string) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan string, 100)
 
@@ -1374,8 +1472,10 @@ func runCmd(processID, name string, args ...string) tea.Cmd {
 		// Inherit full environment
 		cmd.Env = os.Environ()
 
-		// Set working directory
-		if cwd, err := os.Getwd(); err == nil {
+		// Set working directory - use project dir if provided, otherwise cwd
+		if workDir != "" {
+			cmd.Dir = workDir
+		} else if cwd, err := os.Getwd(); err == nil {
 			cmd.Dir = cwd
 		}
 
@@ -1384,7 +1484,7 @@ func runCmd(processID, name string, args ...string) tea.Cmd {
 }
 
 // runWebCmd runs a web dev server command with proper port/host handling
-func runWebCmd(processID, command string, port int, host string) tea.Cmd {
+func runWebCmd(processID, workDir, command string, port int, host string) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan string, 100)
 
@@ -1423,7 +1523,10 @@ func runWebCmd(processID, command string, port int, host string) tea.Cmd {
 		cmd := exec.Command(shell, "-c", shellCmd)
 		cmd.Env = os.Environ()
 
-		if cwd, err := os.Getwd(); err == nil {
+		// Set working directory - use project dir if provided, otherwise cwd
+		if workDir != "" {
+			cmd.Dir = workDir
+		} else if cwd, err := os.Getwd(); err == nil {
 			cmd.Dir = cwd
 		}
 
@@ -1799,7 +1902,7 @@ func (m *Model) renderRight() string {
 	}
 
 	m.logViewport.Width = paneWidth - 4
-	m.logViewport.Height = paneHeight - 4
+	m.logViewport.Height = paneHeight - 3 // Account for border (2) + tab bar (1)
 
 	// Show welcome screen when no processes
 	if len(m.processes) == 0 {
@@ -1870,7 +1973,7 @@ func (m *Model) renderRight() string {
 	// Logs
 	logContent := m.logViewport.View()
 
-	inner := lipgloss.JoinVertical(lipgloss.Left, tabBar, "", logContent)
+	inner := lipgloss.JoinVertical(lipgloss.Left, tabBar, logContent)
 
 	if m.focus == FocusLogs {
 		return activeLogPaneStyle.Width(paneWidth).Height(paneHeight).Render(inner)
@@ -1983,6 +2086,66 @@ func (m *Model) renderPreflight() string {
 		lines = append(lines, line)
 	}
 
+	// Discoveries section
+	if len(m.preflightResults.Discoveries) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, "")
+		discTitle := lipgloss.NewStyle().
+			Foreground(capBlue).
+			Bold(true).
+			Render("  📦 Discovered Projects")
+		lines = append(lines, discTitle)
+		lines = append(lines, "")
+
+		// Group discoveries by type
+		typeIcons := map[string]string{
+			"capacitor": "⚡",
+			"firebase":  "🔥",
+			"ionic":     "💠",
+			"vite":      "⚡",
+		}
+		typeColors := map[string]lipgloss.Color{
+			"capacitor": capBlue,
+			"firebase":  lipgloss.Color("#FFA000"),
+			"ionic":     lipgloss.Color("#3880FF"),
+			"vite":      lipgloss.Color("#646CFF"),
+		}
+
+		for _, disc := range m.preflightResults.Discoveries {
+			icon := typeIcons[disc.Type]
+			if icon == "" {
+				icon = "📁"
+			}
+			color := typeColors[disc.Type]
+			if color == "" {
+				color = capLight
+			}
+
+			typeStyle := lipgloss.NewStyle().Foreground(color).Width(12)
+			nameStyle := lipgloss.NewStyle().Foreground(capLight).Bold(true)
+
+			line := fmt.Sprintf("  %s %s %s",
+				icon,
+				typeStyle.Render(disc.Type),
+				nameStyle.Render(disc.Name))
+
+			if disc.Details != "" {
+				line += "  " + mutedStyle.Render(disc.Details)
+			}
+
+			// Show relative path if not current dir
+			cwd, _ := os.Getwd()
+			if disc.Path != cwd && disc.Path != "" {
+				relPath, err := filepath.Rel(cwd, disc.Path)
+				if err == nil && relPath != "." {
+					line += "  " + pathStyle.Render("./"+relPath)
+				}
+			}
+
+			lines = append(lines, line)
+		}
+	}
+
 	lines = append(lines, "")
 	lines = append(lines, "")
 
@@ -2012,6 +2175,57 @@ func (m *Model) renderPreflight() string {
 func (m Model) handleSettingsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	categories := settings.GetCategories()
 	currentCategory := categories[m.settingsCategory]
+
+	// If we're editing a text field, handle text input
+	if m.editingSettingKey != "" {
+		switch msg.String() {
+		case "enter":
+			// Save the edited value
+			if m.editingSettingType == "int" {
+				var intVal int
+				_, _ = fmt.Sscanf(m.editingSettingValue, "%d", &intVal)
+				m.settings.SetInt(m.editingSettingKey, intVal)
+			} else {
+				m.settings.SetString(m.editingSettingKey, m.editingSettingValue)
+			}
+			_ = m.settings.Save()
+			m.setStatus(fmt.Sprintf("Saved: %s", m.editingSettingValue))
+			m.editingSettingKey = ""
+			m.editingSettingValue = ""
+			m.editingSettingType = ""
+			return m, nil
+		case "esc":
+			// Cancel editing
+			m.editingSettingKey = ""
+			m.editingSettingValue = ""
+			m.editingSettingType = ""
+			m.setStatus("Canceled")
+			return m, nil
+		case "backspace":
+			if len(m.editingSettingValue) > 0 {
+				m.editingSettingValue = m.editingSettingValue[:len(m.editingSettingValue)-1]
+			}
+			return m, nil
+		case "ctrl+c":
+			m.gracefulShutdown()
+			return m, tea.Quit
+		default:
+			// Add character to value (filter for int type)
+			char := msg.String()
+			if len(char) == 1 {
+				if m.editingSettingType == "int" {
+					// Only allow digits
+					if char >= "0" && char <= "9" {
+						m.editingSettingValue += char
+					}
+				} else {
+					// Allow any printable character
+					m.editingSettingValue += char
+				}
+			}
+			return m, nil
+		}
+	}
 
 	switch msg.String() {
 	case "ctrl+c":
@@ -2083,6 +2297,18 @@ func (m Model) handleSettingsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				displayVal = "(auto)"
 			}
 			m.setStatus(fmt.Sprintf("%s: %s", setting.Name, displayVal))
+		case "string":
+			// Enter edit mode for string
+			m.editingSettingKey = setting.Key
+			m.editingSettingValue = m.settings.GetString(setting.Key)
+			m.editingSettingType = "string"
+			m.setStatus("Type new value, Enter to save, Esc to cancel")
+		case "int":
+			// Enter edit mode for int
+			m.editingSettingKey = setting.Key
+			m.editingSettingValue = fmt.Sprintf("%d", m.settings.GetInt(setting.Key))
+			m.editingSettingType = "int"
+			m.setStatus("Type new value, Enter to save, Esc to cancel")
 		}
 		return m, nil
 	}
@@ -2133,6 +2359,9 @@ func (m *Model) renderSettings() string {
 		var valueStr string
 		var valueStyle lipgloss.Style
 
+		// Check if this setting is being edited
+		isEditing := m.editingSettingKey == s.Key
+
 		switch s.Type {
 		case "bool":
 			val := m.settings.GetBool(s.Key)
@@ -2144,21 +2373,33 @@ func (m *Model) renderSettings() string {
 				valueStyle = mutedStyle
 			}
 		case "string":
-			val := m.settings.GetString(s.Key)
-			if val == "" {
-				valueStr = "(not set)"
-				valueStyle = mutedStyle
+			if isEditing {
+				// Show editing value with cursor
+				valueStr = m.editingSettingValue + "█"
+				valueStyle = lipgloss.NewStyle().Foreground(capBlue).Bold(true)
 			} else {
-				if len(val) > 25 {
-					val = val[:22] + "..."
+				val := m.settings.GetString(s.Key)
+				if val == "" {
+					valueStr = "(not set)"
+					valueStyle = mutedStyle
+				} else {
+					if len(val) > 25 {
+						val = val[:22] + "..."
+					}
+					valueStr = val
+					valueStyle = lipgloss.NewStyle().Foreground(capCyan)
 				}
-				valueStr = val
-				valueStyle = lipgloss.NewStyle().Foreground(capCyan)
 			}
 		case "int":
-			val := m.settings.GetInt(s.Key)
-			valueStr = fmt.Sprintf("%d", val)
-			valueStyle = lipgloss.NewStyle().Foreground(capCyan)
+			if isEditing {
+				// Show editing value with cursor
+				valueStr = m.editingSettingValue + "█"
+				valueStyle = lipgloss.NewStyle().Foreground(capBlue).Bold(true)
+			} else {
+				val := m.settings.GetInt(s.Key)
+				valueStr = fmt.Sprintf("%d", val)
+				valueStyle = lipgloss.NewStyle().Foreground(capCyan)
+			}
 		case "choice":
 			val := m.settings.GetString(s.Key)
 			if val == "" {
@@ -2192,19 +2433,36 @@ func (m *Model) renderSettings() string {
 		lines = append(lines, "")
 	}
 
-	// Config file path
-	configPathStr, _ := settings.ConfigPath()
+	// Config file path - show actual loaded config with local/global indicator
+	configPathStr := m.settings.GetConfigPath()
+	if configPathStr == "" {
+		configPathStr, _ = settings.ConfigPath()
+	}
+	configType := "global"
+	if m.settings.IsLocalConfig() {
+		configType = "local"
+	}
 	lines = append(lines, "")
-	lines = append(lines, mutedStyle.Render(fmt.Sprintf("  Config: %s", configPathStr)))
+	lines = append(lines, mutedStyle.Render(fmt.Sprintf("  Config (%s): %s", configType, configPathStr)))
 
 	// Help
 	lines = append(lines, "")
-	helpLine := helpStyle.Render("  ") +
-		helpKeyStyle.Render("←/→") + helpStyle.Render(" category  ") +
-		helpKeyStyle.Render("↑/↓") + helpStyle.Render(" select  ") +
-		helpKeyStyle.Render("enter") + helpStyle.Render(" toggle  ") +
-		helpKeyStyle.Render("esc") + helpStyle.Render(" close  ") +
-		helpKeyStyle.Render("q") + helpStyle.Render(" quit")
+	var helpLine string
+	if m.editingSettingKey != "" {
+		// Show editing controls
+		helpLine = helpStyle.Render("  ") +
+			helpKeyStyle.Render("type") + helpStyle.Render(" to edit  ") +
+			helpKeyStyle.Render("enter") + helpStyle.Render(" save  ") +
+			helpKeyStyle.Render("esc") + helpStyle.Render(" cancel  ") +
+			helpKeyStyle.Render("backspace") + helpStyle.Render(" delete")
+	} else {
+		helpLine = helpStyle.Render("  ") +
+			helpKeyStyle.Render("←/→") + helpStyle.Render(" category  ") +
+			helpKeyStyle.Render("↑/↓") + helpStyle.Render(" select  ") +
+			helpKeyStyle.Render("enter") + helpStyle.Render(" toggle/edit  ") +
+			helpKeyStyle.Render("esc") + helpStyle.Render(" close  ") +
+			helpKeyStyle.Render("q") + helpStyle.Render(" quit")
+	}
 	lines = append(lines, helpLine)
 
 	return strings.Join(lines, "\n")
