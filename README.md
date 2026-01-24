@@ -3,165 +3,219 @@
 </p>
 
 <p align="center">
-  <strong>A slick terminal UI for Capacitor & Ionic mobile development</strong>
+  <strong>The command center for Capacitor & Ionic mobile development</strong>
 </p>
 
 <p align="center">
-  <a href="#installation">Installation</a> •
+  <a href="#quick-start">Quick Start</a> •
   <a href="#features">Features</a> •
-  <a href="#usage">Usage</a> •
+  <a href="#keyboard-shortcuts">Shortcuts</a> •
+  <a href="#ai-integration">AI Integration</a> •
   <a href="#plugins">Plugins</a> •
-  <a href="#configuration">Configuration</a> •
-  <a href="#contributing">Contributing</a>
+  <a href="#configuration">Config</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue" alt="Platform">
-  <img src="https://img.shields.io/badge/license-Icarus%20Source%20Available-green" alt="License">
-  <img src="https://img.shields.io/badge/built%20with-Go-00ADD8" alt="Built with Go">
-  <img src="https://img.shields.io/badge/made%20by-Icarus%2C%20Inc.-purple" alt="Made by Icarus, Inc.">
+  <img src="https://img.shields.io/github/v/release/icarus-itcs/lazycap?style=flat-square&color=00ADD8" alt="Release">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/license-MIT%20%2B%20Commons%20Clause-blue?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/built%20with-Go-00ADD8?style=flat-square" alt="Built with Go">
 </p>
 
 ---
 
 ## What is lazycap?
 
-**lazycap** is a beautiful terminal-based dashboard for [Capacitor](https://capacitorjs.com/) and [Ionic](https://ionicframework.com/) mobile development. It brings together device management, builds, live reload, and debugging into one unified interface — no more juggling multiple terminal windows.
+**lazycap** is a beautiful terminal dashboard for [Capacitor](https://capacitorjs.com/) and [Ionic](https://ionicframework.com/) mobile development. It unifies device management, builds, live reload, debugging, and AI assistance into one elegant interface.
 
-Think of it as the control center for your mobile development workflow.
+No more juggling terminal windows. No more remembering commands. Just `lazycap`.
 
-## Features
+---
 
-- **Device Management** — View all connected iOS simulators, Android emulators, and physical devices in one place
-- **One-Key Actions** — Run, build, sync, and open IDE with single keystrokes
-- **Live Reload** — Start live reload sessions with automatic device targeting
-- **Web Development** — Integrated web dev server with smart framework detection
-- **Process Management** — Monitor running processes with real-time log streaming
-- **Debug Tools** — Built-in cleanup and diagnostic actions for common issues
-- **Plugin System** — Extend functionality with MCP Server, Firebase Emulator, and more
-- **Preflight Checks** — Automatic environment validation on startup
-- **Beautiful UI** — Capacitor-inspired design with intuitive keyboard navigation
+## Quick Start
 
-## Installation
-
-### Using Go
+### Install
 
 ```bash
+# Homebrew (recommended)
+brew tap icarus-itcs/lazycap https://github.com/icarus-itcs/lazycap
+brew install lazycap
+
+# Or with Go
 go install github.com/icarus-itcs/lazycap@latest
 ```
 
-### From Source
+### Run
 
 ```bash
-git clone https://github.com/icarus-itcs/lazycap.git
-cd lazycap
-make install
-```
-
-### Using Homebrew
-
-```bash
-brew tap icarus-itcs/lazycap https://github.com/icarus-itcs/lazycap
-brew install lazycap
-```
-
-## Platform Support
-
-| Platform | Architecture | Status |
-|----------|--------------|--------|
-| macOS | Apple Silicon (arm64) | ✅ Tested |
-| macOS | Intel (amd64) | 🔨 Untested |
-| Linux | 64-bit (amd64) | 🔨 Untested |
-| Linux | ARM64 | 🔨 Untested |
-| Linux | 32-bit / ARMv7 | 🔨 Untested |
-| Windows | 64-bit / ARM64 | 🔨 Untested |
-| FreeBSD | 64-bit | 🔨 Untested |
-
-*Help us test! If you've confirmed lazycap works on your platform, [open an issue](https://github.com/icarus-itcs/lazycap/issues) to let us know.*
-
-## Requirements
-
-- **Go 1.21+** (for building from source)
-- **Node.js 18+** with npm/yarn/pnpm
-- **Capacitor project** (capacitor.config.ts/js/json)
-
-For iOS development:
-- macOS with Xcode installed
-- iOS Simulator or physical device
-
-For Android development:
-- Android Studio with SDK
-- Android Emulator or physical device with USB debugging
-
-## Usage
-
-Navigate to your Capacitor project directory and run:
-
-```bash
+cd your-capacitor-project
 lazycap
 ```
 
-### Keyboard Shortcuts
+That's it. lazycap auto-detects your project, discovers devices, and you're ready to go.
 
+---
+
+## Features
+
+### Device Management
+
+View all your development targets in one place:
+
+| Device Type | Support |
+|-------------|---------|
+| iOS Simulators | Full support with boot/status tracking |
+| iOS Physical Devices | USB-connected devices |
+| Android Emulators | Full support with state management |
+| Android Physical Devices | USB debugging enabled devices |
+| Web Browser | Always available |
+
+**Auto-detection** — lazycap finds devices using `xcrun simctl`, `adb`, and `emulator` commands automatically.
+
+### One-Key Actions
+
+Everything you need is a single keystroke away:
+
+- **`r`** — Run on device (with optional live reload)
+- **`b`** — Build web assets
+- **`s`** — Sync to native projects
+- **`o`** — Open in Xcode or Android Studio
+- **`x`** — Kill a running process
+
+### Live Reload
+
+Start live reload sessions with smart defaults:
+
+- Configurable port (default: 8100)
+- External host detection for physical devices
+- Per-device targeting
+- Auto-sync before run (optional)
+
+### Smart Framework Detection
+
+lazycap auto-detects your web framework and finds the right dev command:
+
+| Framework | Detection |
+|-----------|-----------|
+| Vite | `vite.config.*` |
+| Ionic | `ionic.config.json` |
+| Webpack | `webpack.config.*` |
+| Parcel | `.parcelrc` |
+| Next.js | `next.config.*` |
+| Nuxt | `nuxt.config.*` |
+
+Falls back to common scripts: `dev`, `serve`, `start`, `ionic:serve`, `dev:web`
+
+### Process Management
+
+Monitor all your running processes with real-time logs:
+
+- **Process tabs** — Switch between Run, Build, Sync, Web Dev
+- **Live streaming** — Watch logs as they happen
+- **Status indicators** — See running, success, failed, or canceled
+- **Log actions** — Copy to clipboard or export to file
+
+### 30+ Debug Actions
+
+Press `d` to access powerful cleanup and diagnostic tools:
+
+**iOS/Xcode**
+- Clear Derived Data
+- Clear Device Support
+- Clean iOS Build
+- Reset All Simulators
+- Deintegrate & Reinstall Pods
+
+**Android**
+- Clean Android Build
+- Clear Gradle Cache
+- Stop Gradle Daemons
+- Restart ADB Server
+- Wipe Emulator Data
+
+**Node/Web**
+- Clear node_modules
+- Clear NPM Cache
+- Kill Dev Server Ports
+- Clear Vite/Webpack Cache
+- Force Rebuild
+
+**Nuclear Options**
+- Full Project Clean (all caches)
+- Fresh Install (clean + npm install + pod install + cap sync)
+
+### Preflight Checks
+
+Automatic environment validation on startup:
+
+- Node.js, npm, npx, git
+- Xcode CLI tools & CocoaPods (macOS)
+- Android SDK & ADB
+- Capacitor CLI
+- Version compatibility checks
+
+### Monorepo Support
+
+Working in a monorepo? lazycap discovers all Capacitor projects up to 4 levels deep and lets you switch between them with a project selector.
+
+### Self-Update
+
+Press `U` when an update is available to upgrade lazycap in-place. No package manager needed.
+
+---
+
+## Keyboard Shortcuts
+
+### Core Actions
 | Key | Action |
 |-----|--------|
 | `r` | Run on selected device |
 | `b` | Build the project |
 | `s` | Sync Capacitor |
 | `o` | Open in native IDE |
-| `x` | Kill selected process |
-| `R` | Refresh device list |
-| `U` | Update lazycap (when update available) |
-| `d` | Open debug tools |
-| `P` | Open plugins panel |
-| `,` | Open settings |
-| `p` | Preflight checks |
+| `w` | Start web dev server |
+
+### Navigation
+| Key | Action |
+|-----|--------|
 | `Tab` | Switch between panes |
-| `↑/↓` | Navigate lists |
-| `←/→` | Switch process tabs |
+| `↑` `↓` | Navigate lists |
+| `←` `→` | Switch process tabs |
+| `Enter` | Select / Confirm |
+| `Esc` | Back / Cancel |
+
+### Process Management
+| Key | Action |
+|-----|--------|
+| `x` | Kill selected process |
 | `c` | Copy logs to clipboard |
 | `e` | Export logs to file |
-| `q` | Quit (press twice to confirm) |
 
-### CLI Commands
+### Panels
+| Key | Action |
+|-----|--------|
+| `d` | Debug tools |
+| `P` | Plugins panel |
+| `,` | Settings |
+| `p` | Preflight checks |
+| `?` | Help |
 
-```bash
-# Show version information
-lazycap version
+### System
+| Key | Action |
+|-----|--------|
+| `R` | Refresh device list |
+| `U` | Update lazycap |
+| `q` | Quit (press twice) |
 
-# List available devices
-lazycap devices
+---
 
-# Run as MCP server for AI assistant integration
-lazycap mcp
-```
+## AI Integration
 
-## Plugins
+### MCP Server
 
-lazycap features a powerful plugin system for extending functionality. Plugins can control all aspects of the application including devices, processes, settings, and debug actions.
+lazycap exposes functionality via the [Model Context Protocol](https://modelcontextprotocol.io/), allowing AI assistants to control your development environment.
 
-### Built-in Plugins
-
-#### MCP Server
-
-Exposes lazycap functionality via the [Model Context Protocol](https://modelcontextprotocol.io/), allowing AI assistants like Claude to control your development environment.
-
-**Claude Code Integration:**
-
-Add lazycap to your Claude Code MCP settings (`~/.claude/settings.json`):
-
-```json
-{
-  "mcpServers": {
-    "lazycap": {
-      "command": "lazycap",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-Or run lazycap in your Capacitor project directory with the working directory specified:
+**Add to Claude Code** (`~/.claude/settings.json`):
 
 ```json
 {
@@ -176,53 +230,59 @@ Or run lazycap in your Capacitor project directory with the working directory sp
 ```
 
 **Available Tools:**
-- `list_devices` — Get all available devices and emulators
-- `run_on_device` — Run app on a specific device with optional live reload
-- `sync` — Sync web assets to native projects
-- `build` — Build the web assets
-- `open_ide` — Open Xcode or Android Studio
-- `get_project` — Get current Capacitor project info
-- `get_debug_actions` — List available debug/cleanup actions
-- `run_debug_action` — Execute a debug action
 
-**Plugin Configuration (for TUI mode):**
+| Tool | Description |
+|------|-------------|
+| `list_projects` | List all Capacitor projects |
+| `list_devices` | Get available devices/emulators |
+| `run_on_device` | Run app with optional live reload |
+| `sync` | Sync web assets to native |
+| `build` | Build web assets |
+| `open_ide` | Open Xcode or Android Studio |
+| `get_project` | Get project information |
+| `get_debug_actions` | List debug/cleanup actions |
+| `run_debug_action` | Execute a debug action |
+
+**Example prompts for Claude:**
+
+> "Run the app on my iPhone simulator with live reload"
+
+> "Sync the project and open it in Xcode"
+
+> "Clear all caches and do a fresh install"
+
+---
+
+## Plugins
+
+lazycap features an extensible plugin system. Press `P` to manage plugins.
+
+### MCP Server Plugin
+
+Exposes lazycap via Model Context Protocol for AI assistant integration.
+
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `mode` | Server mode: `tcp` or `stdio` | `tcp` |
-| `port` | TCP port (when mode is tcp) | `9315` |
-| `autoStart` | Start server on launch | `false` |
+| `mode` | `tcp` or `stdio` | `tcp` |
+| `port` | TCP port | `9315` |
+| `autoStart` | Start on launch | `false` |
 
-#### Firebase Emulator
+### Firebase Emulator Plugin
 
-Integrates [Firebase Emulator Suite](https://firebase.google.com/docs/emulator-suite) for local development with Firebase services.
+Integrates [Firebase Emulator Suite](https://firebase.google.com/docs/emulator-suite) for local development.
 
-**Features:**
-- Auto-detects `firebase.json` in your project
-- Manages emulator lifecycle (start/stop)
-- Supports data import/export
-- Shows running emulator status in header
+**Supported Emulators:** Auth, Firestore, Realtime Database, Functions, Hosting, Storage, PubSub, Eventarc
 
-**Configuration:**
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `autoStart` | Start emulators on launch | `false` |
-| `importPath` | Path to import data from | — |
-| `exportOnExit` | Export data when stopping | `true` |
-| `exportPath` | Path to export data to | `.firebase-export` |
+| `autoStart` | Start on launch | `false` |
+| `exportOnExit` | Export data on stop | `true` |
+| `exportPath` | Export directory | `.firebase-export` |
 | `uiEnabled` | Enable Emulator UI | `true` |
 
-### Managing Plugins
+### Plugin API
 
-Press `P` to open the plugins panel where you can:
-- View all installed plugins and their status
-- Start/stop plugins with `Enter`
-- Enable/disable plugins with `e`
-
-Plugin settings are persisted in `~/.config/lazycap/plugins.json`.
-
-### Creating Plugins
-
-lazycap plugins implement the `Plugin` interface:
+Create custom plugins by implementing the `Plugin` interface:
 
 ```go
 type Plugin interface {
@@ -230,7 +290,6 @@ type Plugin interface {
     Name() string
     Description() string
     Version() string
-    Author() string
 
     Init(ctx Context) error
     Start() error
@@ -238,146 +297,185 @@ type Plugin interface {
     IsRunning() bool
 
     GetSettings() []Setting
-    OnSettingChange(key string, value interface{})
     GetStatusLine() string
     GetCommands() []Command
 }
 ```
 
-Plugins have access to the full application context including:
-- Device listing and selection
-- Process management and logs
-- Settings (read/write)
-- Debug actions
-- Event bus for reactive updates
+Plugins can access devices, processes, logs, settings, debug actions, and the event bus.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed plugin development documentation.
+---
 
 ## Configuration
 
-### Settings
+### Settings File
 
-Press `,` to open the settings panel. Settings are organized by category:
+Settings are stored in `~/.config/lazycap/settings.json`. Press `,` to open the settings panel.
 
-**General**
-- Live reload default behavior
-- Verbose output
+### Run Options
 
-**Web Development**
-- Dev server command (auto-detected or custom)
-- Port and host configuration
-- Auto-open browser
-- HTTPS mode
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `liveReloadDefault` | Enable live reload by default | `false` |
+| `liveReloadPort` | Live reload port | `8100` |
+| `externalHost` | External IP (auto-detect if empty) | — |
+| `autoSync` | Sync before running | `false` |
+| `autoBuild` | Build before syncing | `false` |
+| `clearLogsOnRun` | Clear logs on new run | `true` |
 
-Settings are stored in `~/.config/lazycap/settings.json`.
+### Build Options
 
-### Project Configuration
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `buildCommand` | Custom build command | auto-detect |
+| `productionBuild` | Use production mode | `false` |
+| `sourceMaps` | Generate source maps | `true` |
+| `buildTimeout` | Timeout in seconds | `300` |
 
-lazycap automatically detects your Capacitor configuration from:
-- `capacitor.config.ts`
-- `capacitor.config.js`
-- `capacitor.config.json`
+### iOS Options
 
-## Debug Tools
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `iosScheme` | Xcode scheme | — |
+| `iosConfiguration` | Debug or Release | `Debug` |
+| `iosAutoSigning` | Automatic signing | `true` |
+| `iosTeamId` | Development team ID | — |
 
-Press `d` to access built-in debug and cleanup tools:
+### Android Options
 
-**Cache & Build**
-- Clean npm cache
-- Clean Capacitor build artifacts
-- Reset watchman
-- Clear Metro bundler cache
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `androidFlavor` | Build flavor | — |
+| `androidBuildType` | debug or release | `debug` |
+| `androidSdkPath` | Custom SDK path | — |
 
-**iOS**
-- Clean Xcode derived data
-- Reset iOS simulators
-- Clear CocoaPods cache
+### Web Dev Options
 
-**Android**
-- Clean Gradle cache
-- Kill ADB server
-- Clear Android build cache
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `webDevCommand` | Dev server command | auto-detect |
+| `webDevPort` | Dev server port | — |
+| `webOpenBrowser` | Auto-open browser | `false` |
+| `webHttps` | Use HTTPS | `false` |
 
-**Project**
-- Reinstall node_modules
-- Reset Capacitor plugins
-- Full project clean
+### UI Options
 
-## Reporting Issues
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `compactMode` | Compact UI layout | `false` |
+| `showTimestamps` | Timestamps in logs | `false` |
+| `showSpinners` | Animated spinners | `true` |
+| `colorTheme` | dark, light, system | `dark` |
+| `maxLogLines` | Max lines per log | `5000` |
 
-Found a bug or have a feature request? We'd love to hear from you!
+---
 
-1. **Search existing issues** — Your issue might already be reported
-2. **Create a new issue** — Use our issue templates for bugs or feature requests
-3. **Include details** — OS, lazycap version (`lazycap version`), and steps to reproduce
-
-[Open an Issue](https://github.com/icarus-itcs/lazycap/issues/new/choose)
-
-### Debug Information
-
-When reporting bugs, include output from:
+## CLI Commands
 
 ```bash
-lazycap version
+lazycap              # Launch the TUI dashboard
+lazycap version      # Show version, commit, build date
+lazycap devices      # List devices in table format
+lazycap mcp          # Run as MCP server
+lazycap --demo       # Demo mode with mock data
+lazycap --verbose    # Verbose output
+lazycap --config     # Custom config file path
 ```
 
-And check the debug log at `/tmp/lazycap-debug.log` for detailed information.
+---
+
+## Platform Support
+
+| Platform | Architecture | Status |
+|----------|--------------|--------|
+| macOS | Apple Silicon (arm64) | Tested |
+| macOS | Intel (amd64) | Supported |
+| Linux | 64-bit (amd64) | Supported |
+| Linux | ARM64 | Supported |
+| Linux | 32-bit / ARMv7 | Supported |
+| Windows | 64-bit / ARM64 | Untested |
+| FreeBSD | 64-bit | Supported |
+
+---
+
+## Requirements
+
+**Core:**
+- Node.js 18+ with npm/yarn/pnpm
+- Capacitor project (capacitor.config.ts/js/json)
+
+**iOS Development (macOS only):**
+- Xcode with command line tools
+- CocoaPods
+- iOS Simulator or physical device
+
+**Android Development:**
+- Android Studio with SDK
+- ADB
+- Emulator or physical device (USB debugging enabled)
+
+---
+
+## Troubleshooting
+
+### Debug Log
+
+Check `/tmp/lazycap-debug.log` for detailed information.
+
+### Common Issues
+
+**Devices not showing?**
+- Run preflight checks (`p`) to verify tools are installed
+- For iOS: Ensure Xcode CLI is installed (`xcode-select --install`)
+- For Android: Ensure ADB is running (`adb devices`)
+
+**Live reload not connecting?**
+- Check `externalHost` setting for physical devices
+- Verify firewall allows the live reload port
+
+**Build failing?**
+- Use debug tools (`d`) to clean caches
+- Try "Fresh Install" for a complete reset
+
+---
 
 ## Contributing
 
-We welcome contributions from the community! lazycap is open source and we appreciate help in making it better.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-### Ways to Contribute
+**Ways to help:**
+- Report bugs and suggest features
+- Submit pull requests
+- Improve documentation
+- Create and share plugins
+- Test on different platforms
 
-- **Report Bugs** — Found something broken? Let us know!
-- **Suggest Features** — Have an idea? Open a feature request
-- **Submit PRs** — Code contributions are welcome
-- **Improve Docs** — Help us make the documentation better
-- **Create Plugins** — Build and share plugins with the community
-
-### Development Setup
+### Development
 
 ```bash
-# Clone the repository
 git clone https://github.com/icarus-itcs/lazycap.git
 cd lazycap
-
-# Install dependencies
 go mod download
-
-# Build
 make build
-
-# Run locally
 ./bin/lazycap
 ```
 
-### Code Guidelines
-
-- Follow standard Go conventions and formatting (`go fmt`)
-- Write clear commit messages
-- Add tests for new functionality
-- Update documentation as needed
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+---
 
 ## License
 
-lazycap is developed by **Icarus, Inc.** and released under the **Icarus Source Available License**.
+**MIT + Commons Clause** — Free to use, modify, and share. You just can't sell it.
 
-### You CAN:
-- Use lazycap for personal and commercial projects
-- Modify the source code for your own use
-- Contribute improvements back to the project
-- Share lazycap with others (free of charge)
+- Use lazycap for any project (personal or commercial)
+- Modify and fork the code
+- Contribute improvements back
+- Share with others
 
-### You CANNOT:
-- Sell lazycap or derivatives
-- Offer lazycap as a paid service
-- Remove or modify license/attribution notices
-- Create competing commercial products based on this code
+The Commons Clause prevents reselling lazycap or offering it as a paid service.
 
-See [LICENSE](LICENSE) for the full license text.
+See [LICENSE](LICENSE) for details. Copyright (c) 2025 Icarus, Inc.
+
+---
 
 ## Acknowledgments
 
@@ -388,5 +486,5 @@ See [LICENSE](LICENSE) for the full license text.
 ---
 
 <p align="center">
-  Made with ⚡ by <a href="https://icarus.inc">Icarus, Inc.</a>
+  Made with care by <a href="https://icarus.inc">Icarus, Inc.</a>
 </p>
