@@ -32,6 +32,19 @@ var AvailableEmulators = []string{
 	"eventarc",
 }
 
+// Default ports for Firebase emulators
+var DefaultEmulatorPorts = map[string]int{
+	"auth":      9099,
+	"firestore": 8080,
+	"database":  9000,
+	"functions": 5001,
+	"hosting":   5000,
+	"storage":   9199,
+	"pubsub":    8087,
+	"eventarc":  9299,
+	"ui":        4000,
+}
+
 // EmulatorStatus represents the status of an emulator
 type EmulatorStatus struct {
 	Name    string `json:"name"`
@@ -236,6 +249,16 @@ func (p *FirebasePlugin) GetCommands() []plugin.Command {
 			},
 		},
 	}
+}
+
+func (p *FirebasePlugin) GetProcessIDs() []int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if p.cmd != nil && p.cmd.Process != nil {
+		return []int{p.cmd.Process.Pid}
+	}
+	return nil
 }
 
 func (p *FirebasePlugin) Init(ctx plugin.Context) error {
@@ -483,6 +506,9 @@ func (p *FirebasePlugin) loadFirebaseConfig(path string) {
 }
 
 func (p *FirebasePlugin) startEmulators(enabledList []string) error {
+	// Kill any processes using the required ports
+	p.killPortBlockers(enabledList)
+
 	args := []string{"emulators:start"}
 
 	// Add --only flag with enabled emulators
@@ -579,6 +605,92 @@ func (p *FirebasePlugin) startEmulators(enabledList []string) error {
 	}()
 
 	return nil
+}
+
+// killPortBlockers kills any processes using the ports needed by the enabled emulators
+func (p *FirebasePlugin) killPortBlockers(enabledList []string) {
+	p.mu.RLock()
+	ctx := p.ctx
+	configuredEmulators := p.emulators
+	configPath := p.configPath
+	p.mu.RUnlock()
+
+	// Build a map of configured ports from firebase.json
+	configuredPorts := make(map[string]int)
+	for _, emu := range configuredEmulators {
+		if emu.Port > 0 {
+			configuredPorts[emu.Name] = emu.Port
+		}
+	}
+
+	// Also read UI port from firebase.json if available
+	if configPath != "" {
+		if uiPort := p.getUIPortFromConfig(configPath); uiPort > 0 {
+			configuredPorts["ui"] = uiPort
+		}
+	}
+
+	// Collect ports to free - prefer configured ports, fall back to defaults
+	portsToFree := make([]int, 0)
+	for _, emu := range enabledList {
+		if port, ok := configuredPorts[emu]; ok && port > 0 {
+			portsToFree = append(portsToFree, port)
+		} else if port, ok := DefaultEmulatorPorts[emu]; ok {
+			portsToFree = append(portsToFree, port)
+		}
+	}
+
+	// Always include UI port
+	if uiPort, ok := configuredPorts["ui"]; ok && uiPort > 0 {
+		portsToFree = append(portsToFree, uiPort)
+	} else {
+		portsToFree = append(portsToFree, DefaultEmulatorPorts["ui"])
+	}
+
+	for _, port := range portsToFree {
+		// Use lsof to find processes using this port
+		cmd := exec.Command("lsof", "-t", "-i", fmt.Sprintf(":%d", port))
+		output, err := cmd.Output()
+		if err != nil {
+			continue // No process using this port
+		}
+
+		// Kill each PID found
+		pids := strings.Fields(strings.TrimSpace(string(output)))
+		for _, pidStr := range pids {
+			var pid int
+			if _, err := fmt.Sscanf(pidStr, "%d", &pid); err == nil && pid > 0 {
+				if ctx != nil {
+					ctx.Log(PluginID, fmt.Sprintf("Killing process %d using port %d", pid, port))
+				}
+				// Kill the process
+				killCmd := exec.Command("kill", "-9", pidStr)
+				_ = killCmd.Run()
+			}
+		}
+	}
+}
+
+// getUIPortFromConfig reads the UI port from firebase.json
+func (p *FirebasePlugin) getUIPortFromConfig(configPath string) int {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return 0
+	}
+
+	var config struct {
+		Emulators struct {
+			UI struct {
+				Port int `json:"port"`
+			} `json:"ui"`
+		} `json:"emulators"`
+	}
+
+	if err := json.Unmarshal(data, &config); err != nil {
+		return 0
+	}
+
+	return config.Emulators.UI.Port
 }
 
 func (p *FirebasePlugin) readOutput(reader interface{ Read([]byte) (int, error) }) {

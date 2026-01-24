@@ -123,6 +123,10 @@ func (p *MCPPlugin) GetCommands() []plugin.Command {
 	return nil // No custom commands
 }
 
+func (p *MCPPlugin) GetProcessIDs() []int {
+	return nil // MCP is a TCP server, no external processes
+}
+
 func (p *MCPPlugin) Init(ctx plugin.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -322,8 +326,9 @@ func (p *MCPPlugin) handleInitialize() map[string]interface{} {
 	return map[string]interface{}{
 		"protocolVersion": "2024-11-05",
 		"serverInfo": map[string]interface{}{
-			"name":    "lazycap",
-			"version": PluginVersion,
+			"name":        "lazycap",
+			"version":     PluginVersion,
+			"description": "Capacitor/Ionic mobile app development tools - controls native builds, device deployment, emulators, and Firebase services",
 		},
 		"capabilities": map[string]interface{}{
 			"tools": map[string]interface{}{},
@@ -335,7 +340,7 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 	tools := []ToolInfo{
 		{
 			Name:        "list_devices",
-			Description: "List all available devices, emulators, and simulators",
+			Description: "[Capacitor] List iOS Simulators, Android Emulators, and physical devices available for app deployment. Shows device name, platform, OS version, and online status.",
 			InputSchema: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -343,17 +348,17 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "run_on_device",
-			Description: "Run the app on a specific device",
+			Description: "[Capacitor] Deploy and run the app on a device/emulator using 'npx cap run'. Builds web assets, syncs to native platform, compiles native code, and launches on the target device.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"deviceId": map[string]interface{}{
 						"type":        "string",
-						"description": "Device ID to run on",
+						"description": "Device ID from list_devices (e.g., 'iPhone-15-Pro' or 'emulator-5554')",
 					},
 					"liveReload": map[string]interface{}{
 						"type":        "boolean",
-						"description": "Enable live reload",
+						"description": "Enable live reload - app auto-refreshes when web code changes",
 					},
 				},
 				"required": []string{"deviceId"},
@@ -361,7 +366,7 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "run_web",
-			Description: "Start the web development server",
+			Description: "[Web Dev] Start the web development server (npm run dev / ionic serve). Opens the app in browser for rapid web development without native compilation.",
 			InputSchema: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -369,20 +374,20 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "sync",
-			Description: "Sync web assets to native platforms",
+			Description: "[Capacitor] Run 'npx cap sync' to copy web assets (HTML/CSS/JS) to native iOS/Android projects and update native plugins. Required after npm install or web code changes before native build.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"platform": map[string]interface{}{
 						"type":        "string",
-						"description": "Platform to sync (ios, android, or empty for all)",
+						"description": "Platform to sync: 'ios', 'android', or omit for both platforms",
 					},
 				},
 			},
 		},
 		{
 			Name:        "build",
-			Description: "Build the web assets",
+			Description: "[Web Build] Run the web build command (npm run build) to compile and bundle the web application. Creates production-ready assets in the build output directory.",
 			InputSchema: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -390,13 +395,13 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "open_ide",
-			Description: "Open the native project in IDE (Xcode or Android Studio)",
+			Description: "[Capacitor] Open native project in IDE using 'npx cap open'. Opens Xcode for iOS development or Android Studio for Android development.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"platform": map[string]interface{}{
 						"type":        "string",
-						"description": "Platform to open (ios or android)",
+						"description": "'ios' to open Xcode, 'android' to open Android Studio",
 					},
 				},
 				"required": []string{"platform"},
@@ -404,7 +409,7 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "get_processes",
-			Description: "Get list of running and completed processes",
+			Description: "[Process Manager] List all running and completed processes including Capacitor builds, syncs, device runs, web server, and Firebase emulators. Shows process ID, name, status, and runtime.",
 			InputSchema: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -412,13 +417,13 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "get_logs",
-			Description: "Get logs for a specific process",
+			Description: "[Process Manager] Get output logs for a specific process. Use to see build output, compilation errors, runtime logs, or Firebase emulator output.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"processId": map[string]interface{}{
 						"type":        "string",
-						"description": "Process ID to get logs for",
+						"description": "Process ID from get_processes",
 					},
 				},
 				"required": []string{"processId"},
@@ -426,13 +431,13 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "get_all_logs",
-			Description: "Get logs from processes with optional filtering. Use this to diagnose build errors, runtime issues, or understand what happened. Supports filtering by process type, status, and text search.",
+			Description: "[Process Manager] Get logs from all processes with filtering. Use to diagnose Capacitor build errors, Xcode/Gradle compilation failures, runtime crashes, or Firebase issues.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"type": map[string]interface{}{
 						"type":        "string",
-						"description": "Filter by process type: 'build', 'sync', 'run', 'web', or a plugin name like 'firebase'. Partial match supported.",
+						"description": "Filter by type: 'build' (web build), 'sync' (cap sync), 'run' (device deployment), 'web' (dev server), 'firebase' (emulators)",
 					},
 					"status": map[string]interface{}{
 						"type":        "string",
@@ -441,28 +446,28 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 					},
 					"search": map[string]interface{}{
 						"type":        "string",
-						"description": "Search for text pattern in logs (case-insensitive). Use to find specific errors or messages.",
+						"description": "Search for text pattern in logs (case-insensitive). Find specific errors or messages.",
 					},
 					"errors_only": map[string]interface{}{
 						"type":        "boolean",
-						"description": "Only return log lines containing error indicators (error, Error, ERROR, failed, Failed, FAILED, exception, panic, fatal)",
+						"description": "Only return error lines (error, failed, exception, panic, fatal)",
 					},
 					"tail": map[string]interface{}{
 						"type":        "integer",
-						"description": "Number of lines to return per process (default: all lines). Use to limit output size.",
+						"description": "Limit to last N lines per process",
 					},
 				},
 			},
 		},
 		{
 			Name:        "kill_process",
-			Description: "Kill a running process",
+			Description: "[Process Manager] Terminate a running process. Use to stop a stuck build, kill the web dev server, or stop Firebase emulators.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"processId": map[string]interface{}{
 						"type":        "string",
-						"description": "Process ID to kill",
+						"description": "Process ID from get_processes",
 					},
 				},
 				"required": []string{"processId"},
@@ -470,7 +475,7 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "get_debug_actions",
-			Description: "Get list of available debug/cleanup actions",
+			Description: "[Debug Tools] List available debug and cleanup actions for troubleshooting Capacitor/iOS/Android issues. Includes cache clearing, dependency reinstall, and platform reset options.",
 			InputSchema: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -478,13 +483,13 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "run_debug_action",
-			Description: "Run a debug/cleanup action",
+			Description: "[Debug Tools] Execute a debug action like clearing Xcode derived data, resetting Android build cache, reinstalling node_modules, or cleaning Capacitor platforms.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"actionId": map[string]interface{}{
 						"type":        "string",
-						"description": "Debug action ID to run",
+						"description": "Action ID from get_debug_actions",
 					},
 				},
 				"required": []string{"actionId"},
@@ -492,7 +497,7 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "get_settings",
-			Description: "Get current settings",
+			Description: "[Configuration] Get lazycap settings including default platform, build commands, live reload preferences, and enabled MCP tools.",
 			InputSchema: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -500,13 +505,13 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "set_setting",
-			Description: "Change a setting value",
+			Description: "[Configuration] Change a lazycap setting value.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"key": map[string]interface{}{
 						"type":        "string",
-						"description": "Setting key",
+						"description": "Setting key from get_settings",
 					},
 					"value": map[string]interface{}{
 						"description": "New value for the setting",
@@ -517,7 +522,7 @@ func (p *MCPPlugin) handleToolsList() map[string]interface{} {
 		},
 		{
 			Name:        "get_project",
-			Description: "Get project information",
+			Description: "[Project Info] Get Capacitor project details including app name, app ID (bundle identifier), platforms configured (ios/android), project root path, and capacitor.config.ts settings.",
 			InputSchema: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},

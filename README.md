@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hero.png" alt="lazycap - Terminal UI for Capacitor Development" width="800">
+  <img src="assets/demo.gif" alt="lazycap - Terminal UI for Capacitor Development" width="800">
 </p>
 
 <p align="center">

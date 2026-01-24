@@ -332,8 +332,9 @@ func handleMCPRequest(ctx *mcpContext, line string) mcpResponse {
 		response.Result = map[string]interface{}{
 			"protocolVersion": "2024-11-05",
 			"serverInfo": map[string]interface{}{
-				"name":    "lazycap",
-				"version": appVersion,
+				"name":        "lazycap",
+				"version":     appVersion,
+				"description": "Capacitor/Ionic mobile app development tools - controls native iOS/Android builds, device deployment, simulators/emulators, and Firebase services",
 			},
 			"capabilities": map[string]interface{}{
 				"tools": map[string]interface{}{},
@@ -357,7 +358,7 @@ func handleToolsList(ctx *mcpContext) map[string]interface{} {
 	allTools := []map[string]interface{}{
 		{
 			"name":        "list_projects",
-			"description": "List all discovered Capacitor projects in the current directory and subdirectories",
+			"description": "[Capacitor] List all discovered Capacitor/Ionic mobile app projects. Finds projects by locating capacitor.config.ts/json files. Returns project name, path, app ID, and configured platforms.",
 			"inputSchema": map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -365,7 +366,7 @@ func handleToolsList(ctx *mcpContext) map[string]interface{} {
 		},
 		{
 			"name":        "list_devices",
-			"description": "List all available devices, emulators, and simulators for running the app",
+			"description": "[Capacitor] List iOS Simulators, Android Emulators, and connected physical devices available for app deployment. Shows device ID, name, platform, OS version, and online status.",
 			"inputSchema": map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -373,25 +374,25 @@ func handleToolsList(ctx *mcpContext) map[string]interface{} {
 		},
 		{
 			"name":        "run_on_device",
-			"description": "Run the Capacitor app on a specific device or emulator",
+			"description": "[Capacitor] Deploy and run the app using 'npx cap run'. Builds web assets, syncs to native platform, compiles with Xcode/Gradle, and launches on the target device/emulator.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"project": map[string]interface{}{
 						"type":        "string",
-						"description": "Project name or path (from list_projects). Optional if only one project exists.",
+						"description": "Project name or path from list_projects. Optional if only one project.",
 					},
 					"deviceId": map[string]interface{}{
 						"type":        "string",
-						"description": "Device ID to run on (get from list_devices)",
+						"description": "Device ID from list_devices (e.g., 'iPhone-15-Pro' or 'emulator-5554')",
 					},
 					"platform": map[string]interface{}{
 						"type":        "string",
-						"description": "Platform: ios, android, or web",
+						"description": "'ios' (uses Xcode), 'android' (uses Gradle), or 'web' (dev server)",
 					},
 					"liveReload": map[string]interface{}{
 						"type":        "boolean",
-						"description": "Enable live reload for development",
+						"description": "Enable live reload - app auto-refreshes when web code changes",
 					},
 				},
 				"required": []string{"deviceId", "platform"},
@@ -399,47 +400,47 @@ func handleToolsList(ctx *mcpContext) map[string]interface{} {
 		},
 		{
 			"name":        "sync",
-			"description": "Sync web assets to native iOS/Android projects",
+			"description": "[Capacitor] Run 'npx cap sync' to copy web assets (HTML/CSS/JS) to native iOS/Android projects and update native plugins. Required after npm install or web changes before native build.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"project": map[string]interface{}{
 						"type":        "string",
-						"description": "Project name or path (from list_projects). Optional if only one project exists.",
+						"description": "Project name or path from list_projects. Optional if only one project.",
 					},
 					"platform": map[string]interface{}{
 						"type":        "string",
-						"description": "Platform to sync: ios, android, or empty for all",
+						"description": "'ios', 'android', or omit for both platforms",
 					},
 				},
 			},
 		},
 		{
 			"name":        "build",
-			"description": "Build the web assets (npm run build)",
+			"description": "[Web Build] Run 'npm run build' to compile and bundle the web application (Vue/React/Angular). Creates production-ready assets that get synced to native platforms.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"project": map[string]interface{}{
 						"type":        "string",
-						"description": "Project name or path (from list_projects). Optional if only one project exists.",
+						"description": "Project name or path from list_projects. Optional if only one project.",
 					},
 				},
 			},
 		},
 		{
 			"name":        "open_ide",
-			"description": "Open the native project in Xcode (iOS) or Android Studio (Android)",
+			"description": "[Capacitor] Run 'npx cap open' to open the native project in its IDE. Opens Xcode for iOS (to edit Swift/Obj-C, configure signing, etc.) or Android Studio for Android (to edit Kotlin/Java, configure Gradle, etc.).",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"project": map[string]interface{}{
 						"type":        "string",
-						"description": "Project name or path (from list_projects). Optional if only one project exists.",
+						"description": "Project name or path from list_projects. Optional if only one project.",
 					},
 					"platform": map[string]interface{}{
 						"type":        "string",
-						"description": "Platform: ios or android",
+						"description": "'ios' to open Xcode, 'android' to open Android Studio",
 					},
 				},
 				"required": []string{"platform"},
@@ -447,20 +448,20 @@ func handleToolsList(ctx *mcpContext) map[string]interface{} {
 		},
 		{
 			"name":        "get_project",
-			"description": "Get information about a Capacitor project",
+			"description": "[Project Info] Get Capacitor project details: app name, app ID (bundle identifier), platforms configured, project root path, web directory, and capacitor.config settings.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"project": map[string]interface{}{
 						"type":        "string",
-						"description": "Project name or path (from list_projects). Optional if only one project exists.",
+						"description": "Project name or path from list_projects. Optional if only one project.",
 					},
 				},
 			},
 		},
 		{
 			"name":        "get_debug_actions",
-			"description": "List available debug and cleanup actions",
+			"description": "[Debug Tools] List available debug/cleanup actions for troubleshooting: clear Xcode derived data, reset Android build cache, reinstall node_modules, clean Capacitor platforms, kill port processes.",
 			"inputSchema": map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -468,7 +469,7 @@ func handleToolsList(ctx *mcpContext) map[string]interface{} {
 		},
 		{
 			"name":        "run_debug_action",
-			"description": "Run a debug or cleanup action (like clearing caches, killing processes)",
+			"description": "[Debug Tools] Execute a debug action. Common uses: fix Xcode build issues (clear-derived-data), fix Android build issues (clean-android), reset dependencies (reinstall-deps), free stuck ports.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -482,38 +483,38 @@ func handleToolsList(ctx *mcpContext) map[string]interface{} {
 		},
 		{
 			"name":        "get_all_logs",
-			"description": "Get logs from lazycap debug log file. Use this to diagnose build errors, runtime issues, or understand what happened. Supports filtering by text search and limiting output.",
+			"description": "[Logs] Get debug logs to diagnose Capacitor/Xcode/Gradle build errors, runtime crashes, or Firebase issues. Searches lazycap's debug log file with optional filtering.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"search": map[string]interface{}{
 						"type":        "string",
-						"description": "Search for text pattern in logs (case-insensitive)",
+						"description": "Search for text pattern (case-insensitive). Find specific errors or messages.",
 					},
 					"errors_only": map[string]interface{}{
 						"type":        "boolean",
-						"description": "Only return lines containing error indicators (error, failed, exception, panic, fatal)",
+						"description": "Only return error lines (error, failed, exception, panic, fatal)",
 					},
 					"tail": map[string]interface{}{
 						"type":        "integer",
-						"description": "Number of lines to return from end of log (default: 100)",
+						"description": "Limit to last N lines (default: 100)",
 					},
 				},
 			},
 		},
 		{
 			"name":        "run_command",
-			"description": "Run a shell command in a Capacitor project directory and return the output. Use for npm commands, checking files, or running custom scripts.",
+			"description": "[Shell] Run a shell command in the Capacitor project directory. Use for: npm install, checking package.json, running custom scripts, inspecting files, or any CLI operation.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"project": map[string]interface{}{
 						"type":        "string",
-						"description": "Project name or path (from list_projects). Optional if only one project exists.",
+						"description": "Project name or path from list_projects. Optional if only one project.",
 					},
 					"command": map[string]interface{}{
 						"type":        "string",
-						"description": "Shell command to run",
+						"description": "Shell command to run (e.g., 'npm install', 'cat package.json', 'ls -la')",
 					},
 				},
 				"required": []string{"command"},

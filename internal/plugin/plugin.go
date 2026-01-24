@@ -27,6 +27,9 @@ type Plugin interface {
 	// UI Integration (optional)
 	GetStatusLine() string  // Short status for the UI header
 	GetCommands() []Command // Additional keyboard commands
+
+	// Resource tracking (optional)
+	GetProcessIDs() []int // PIDs of external processes spawned by this plugin
 }
 
 // Setting represents a plugin configuration option

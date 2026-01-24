@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -158,6 +159,9 @@ type Model struct {
 	debugConfirm    bool
 	debugResult     *debug.Result
 	debugResultTime time.Time
+
+	// Memory tracking
+	memoryUsage uint64 // Total memory in bytes (lazycap + child processes)
 }
 
 type keyMap struct {
@@ -619,6 +623,8 @@ type selfUpdateMsg struct {
 	err error
 }
 
+type memoryTickMsg struct{}
+
 // Commands
 func loadDevices() tea.Msg {
 	devices, err := cap.ListDevices()
@@ -647,6 +653,103 @@ func (m *Model) doSelfUpdate() tea.Cmd {
 		}
 		err := update.SelfUpdate(m.updateInfo)
 		return selfUpdateMsg{err: err}
+	}
+}
+
+// scheduleMemoryUpdate schedules the next memory update tick
+func scheduleMemoryUpdate() tea.Cmd {
+	return tea.Tick(time.Second*2, func(t time.Time) tea.Msg {
+		return memoryTickMsg{}
+	})
+}
+
+// calculateMemoryUsage computes total memory usage (lazycap + child processes + plugins)
+func (m *Model) calculateMemoryUsage() uint64 {
+	var totalBytes uint64
+
+	// Get lazycap's own memory usage
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	totalBytes += memStats.Alloc
+
+	// Get memory usage of child processes (capacitor runs, builds, syncs)
+	for _, p := range m.processes {
+		if p.Status == ProcessRunning && p.Cmd != nil && p.Cmd.Process != nil {
+			pid := p.Cmd.Process.Pid
+			childMem := getProcessMemory(pid)
+			totalBytes += childMem
+		}
+	}
+
+	// Get memory usage of plugin processes (Firebase emulators, etc.)
+	for _, p := range plugin.All() {
+		if p.IsRunning() {
+			for _, pid := range p.GetProcessIDs() {
+				childMem := getProcessMemory(pid)
+				totalBytes += childMem
+			}
+		}
+	}
+
+	return totalBytes
+}
+
+// getProcessMemory gets memory usage for a process and all its descendants by PID
+func getProcessMemory(pid int) uint64 {
+	return getProcessTreeMemory(pid, make(map[int]bool))
+}
+
+// getProcessTreeMemory recursively gets memory for a process and all its children
+func getProcessTreeMemory(pid int, visited map[int]bool) uint64 {
+	if visited[pid] {
+		return 0
+	}
+	visited[pid] = true
+
+	var totalMem uint64
+
+	// Get this process's memory
+	cmd := exec.Command("ps", "-o", "rss=", "-p", fmt.Sprintf("%d", pid))
+	output, err := cmd.Output()
+	if err == nil {
+		var rssKB uint64
+		_, _ = fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &rssKB)
+		totalMem += rssKB * 1024
+	}
+
+	// Find child processes using pgrep
+	pgrepCmd := exec.Command("pgrep", "-P", fmt.Sprintf("%d", pid))
+	pgrepOutput, err := pgrepCmd.Output()
+	if err == nil {
+		childPids := strings.Fields(strings.TrimSpace(string(pgrepOutput)))
+		for _, childPidStr := range childPids {
+			var childPid int
+			if _, err := fmt.Sscanf(childPidStr, "%d", &childPid); err == nil && childPid > 0 {
+				totalMem += getProcessTreeMemory(childPid, visited)
+			}
+		}
+	}
+
+	return totalMem
+}
+
+// formatBytes formats bytes as human-readable string (KB, MB, GB)
+func formatBytes(bytes uint64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.1fGB", float64(bytes)/float64(GB))
+	case bytes >= MB:
+		return fmt.Sprintf("%.1fMB", float64(bytes)/float64(MB))
+	case bytes >= KB:
+		return fmt.Sprintf("%.1fKB", float64(bytes)/float64(KB))
+	default:
+		return fmt.Sprintf("%dB", bytes)
 	}
 }
 
@@ -769,6 +872,7 @@ func (m Model) Init() tea.Cmd {
 		checkForUpdate(m.version),
 		m.spinner.Tick,
 		setTerminalTitle(m.getTerminalTitle()),
+		scheduleMemoryUpdate(),
 	}
 	// Start listening for plugin logs if plugin context is available
 	if m.pluginContext != nil {
@@ -1050,6 +1154,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.setStatus("Update complete! Restart lazycap to use the new version.")
 		}
+
+	case memoryTickMsg:
+		m.memoryUsage = m.calculateMemoryUsage()
+		cmds = append(cmds, scheduleMemoryUpdate())
 
 	case processStartedMsg:
 		for _, p := range m.processes {
@@ -1795,6 +1903,12 @@ func (m *Model) renderStatusBar() string {
 				}
 			}
 		}
+	}
+
+	// Memory usage
+	if m.memoryUsage > 0 {
+		memStr := formatBytes(m.memoryUsage)
+		statusItems = append(statusItems, mutedStyle.Render("Mem "+memStr))
 	}
 
 	if len(statusItems) == 0 {
