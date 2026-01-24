@@ -285,7 +285,7 @@ func ListDevices() ([]device.Device, error) {
 
 // listAndroidDevices lists Android devices via adb
 func listAndroidDevices() ([]device.Device, error) {
-	var devices []device.Device
+	var devices []device.Device //nolint:prealloc // size unknown until parsing output
 
 	// Check if adb is available
 	if _, err := exec.LookPath("adb"); err != nil {
@@ -361,7 +361,7 @@ func listAndroidDevices() ([]device.Device, error) {
 
 // listAndroidEmulators lists available Android emulators
 func listAndroidEmulators() ([]device.Device, error) { //nolint:unparam // error kept for API consistency
-	var devices []device.Device
+	var devices []device.Device //nolint:prealloc // size unknown until parsing output
 
 	cmd := exec.Command("emulator", "-list-avds")
 	output, err := cmd.Output()

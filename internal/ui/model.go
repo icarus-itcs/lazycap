@@ -1923,7 +1923,7 @@ func (m *Model) renderPreflight() string {
 		MarginBottom(1).
 		Render("  ⚡ Preflight Checks")
 
-	var lines []string
+	lines := make([]string, 0, len(m.preflightResults.Checks)+10)
 	lines = append(lines, "")
 	lines = append(lines, title)
 	lines = append(lines, "")
@@ -2099,7 +2099,7 @@ func (m *Model) renderSettings() string {
 		Bold(true).
 		Render("  ⚡ Settings")
 
-	var lines []string
+	lines := make([]string, 0, 20)
 	lines = append(lines, "")
 	lines = append(lines, title)
 	lines = append(lines, "")
