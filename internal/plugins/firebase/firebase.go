@@ -16,7 +16,7 @@ import (
 const (
 	PluginID      = "firebase-emulator"
 	PluginName    = "Firebase Emulator"
-	PluginVersion = "1.1.0"
+	PluginVersion = "1.1.1"
 	PluginAuthor  = "lazycap"
 )
 
