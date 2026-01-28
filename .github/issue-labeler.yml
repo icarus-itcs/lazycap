@@ -1,0 +1,29 @@
+# Issue labeler configuration - labels issues based on keywords
+
+# Platform labels
+firebase:
+  - '(firebase|firestore|emulator suite|firebase emulator)'
+android:
+  - '(android|gradle|apk|adb|avd|android studio|emulator-\d+)'
+ios:
+  - '(ios|xcode|simulator|iphone|ipad|xcrun|simctl|ipa)'
+mcp:
+  - '(mcp|model context|claude|ai assistant|tool call)'
+
+# Type labels - be careful with these to avoid false positives
+bug:
+  - '(crash|error|bug|broken|fail|not work|doesn.t work|exception|panic)'
+enhancement:
+  - '(feature request|enhancement|would be nice|suggestion|add support)'
+question:
+  - '(how do i|how can i|is it possible|can i|help needed|\?$)'
+documentation:
+  - '(documentation|docs|readme|typo|spelling)'
+
+# Environment
+windows:
+  - '(windows|win10|win11|powershell|cmd\.exe)'
+macos:
+  - '(macos|mac os|osx|darwin|homebrew)'
+linux:
+  - '(linux|ubuntu|debian|fedora|arch)'

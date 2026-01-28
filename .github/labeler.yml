@@ -1,0 +1,43 @@
+# PR labeler configuration - labels PRs based on files changed
+
+firebase:
+  - changed-files:
+      - any-glob-to-any-file: 'internal/plugins/firebase/**'
+
+mcp:
+  - changed-files:
+      - any-glob-to-any-file: 'internal/plugins/mcp/**'
+
+ios:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/ios/**'
+          - '**/*ios*'
+          - '**/*simulator*'
+
+android:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/android/**'
+          - '**/*android*'
+          - '**/*emulator*'
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
+
+ui:
+  - changed-files:
+      - any-glob-to-any-file: 'internal/ui/**'
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'go.mod'
+          - 'go.sum'
