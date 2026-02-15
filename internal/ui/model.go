@@ -25,6 +25,7 @@ import (
 	"github.com/icarus-itcs/lazycap/internal/plugin"
 	"github.com/icarus-itcs/lazycap/internal/preflight"
 	"github.com/icarus-itcs/lazycap/internal/settings"
+	"github.com/icarus-itcs/lazycap/internal/shell"
 	"github.com/icarus-itcs/lazycap/internal/update"
 )
 
@@ -1461,27 +1462,18 @@ func (m *Model) startRunCommand(dev *device.Device, liveReload bool) tea.Cmd {
 				strings.Join(args, " "),
 			)
 
-			shell := os.Getenv("SHELL")
-			if shell == "" {
-				shell = "/bin/zsh"
-			}
-
-			shellCmd := fmt.Sprintf("source ~/.zshrc 2>/dev/null; source ~/.zprofile 2>/dev/null; %s", cmdStr)
-			cmd := exec.Command(shell, "-c", shellCmd)
-			cmd.Env = os.Environ()
-
-			if projectDir != "" {
-				cmd.Dir = projectDir
-			} else if cwd, err := os.Getwd(); err == nil {
-				cmd.Dir = cwd
-			}
+			cmd := shell.CreateCommand(shell.CommandConfig{
+				Settings: m.settings,
+				Command:  cmdStr,
+				WorkDir:  projectDir,
+			})
 
 			return runCmdWithPipes(p.ID, cmd, ch)
 		}
 	}
 
 	p := m.createProcess(name, "npx "+strings.Join(args, " "))
-	return runCmd(p.ID, m.getProjectDir(), "npx", args...)
+	return runCmd(m.settings, p.ID, m.getProjectDir(), "npx", args...)
 }
 
 func (m *Model) startSyncCommand(platform string) tea.Cmd {
@@ -1490,22 +1482,22 @@ func (m *Model) startSyncCommand(platform string) tea.Cmd {
 		args = append(args, platform)
 	}
 	p := m.createProcess("Sync", "npx "+strings.Join(args, " "))
-	return runCmd(p.ID, m.getProjectDir(), "npx", args...)
+	return runCmd(m.settings, p.ID, m.getProjectDir(), "npx", args...)
 }
 
 func (m *Model) startBuildCommand() tea.Cmd {
 	p := m.createProcess("Build", "npm run build")
-	return runCmd(p.ID, m.getProjectDir(), "npm", "run", "build")
+	return runCmd(m.settings, p.ID, m.getProjectDir(), "npm", "run", "build")
 }
 
 func (m *Model) startOpenCommand(platform string) tea.Cmd {
 	p := m.createProcess("Open", "npx cap open "+platform)
-	return runCmd(p.ID, m.getProjectDir(), "npx", "cap", "open", platform)
+	return runCmd(m.settings, p.ID, m.getProjectDir(), "npx", "cap", "open", platform)
 }
 
 func (m *Model) startUpgrade() tea.Cmd {
 	p := m.createProcess("Upgrade", "npm install @capacitor/core@latest @capacitor/cli@latest")
-	return runCmd(p.ID, m.getProjectDir(), "npm", "install", "@capacitor/core@latest", "@capacitor/cli@latest")
+	return runCmd(m.settings, p.ID, m.getProjectDir(), "npm", "install", "@capacitor/core@latest", "@capacitor/cli@latest")
 }
 
 func (m *Model) startWebDevCommand() tea.Cmd {
@@ -1549,10 +1541,10 @@ func (m *Model) startWebDevCommand() tea.Cmd {
 
 	// Run the command directly - let the dev server use its own defaults
 	// The command should be the full command like "npm run dev" or "npx vite"
-	return runWebCmd(p.ID, m.getProjectDir(), command, port, host)
+	return runWebCmd(m.settings, p.ID, m.getProjectDir(), command, port, host)
 }
 
-func runCmd(processID, workDir, name string, args ...string) tea.Cmd {
+func runCmd(s *settings.Settings, processID, workDir, name string, args ...string) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan string, 100)
 
@@ -1566,33 +1558,18 @@ func runCmd(processID, workDir, name string, args ...string) tea.Cmd {
 			}
 		}
 
-		// Run through user's shell with full environment
-		// Using 'source' to load shell config ensures proper PATH
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/zsh"
-		}
-
-		// Source the profile explicitly and run command
-		shellCmd := fmt.Sprintf("source ~/.zshrc 2>/dev/null; source ~/.zprofile 2>/dev/null; %s", cmdStr)
-		cmd := exec.Command(shell, "-c", shellCmd)
-
-		// Inherit full environment
-		cmd.Env = os.Environ()
-
-		// Set working directory - use project dir if provided, otherwise cwd
-		if workDir != "" {
-			cmd.Dir = workDir
-		} else if cwd, err := os.Getwd(); err == nil {
-			cmd.Dir = cwd
-		}
+		cmd := shell.CreateCommand(shell.CommandConfig{
+			Settings: s,
+			Command:  cmdStr,
+			WorkDir:  workDir,
+		})
 
 		return runCmdWithPipes(processID, cmd, ch)
 	}
 }
 
 // runWebCmd runs a web dev server command with proper port/host handling
-func runWebCmd(processID, workDir, command string, port int, host string) tea.Cmd {
+func runWebCmd(s *settings.Settings, processID, workDir, command string, port int, host string) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan string, 100)
 
@@ -1621,22 +1598,11 @@ func runWebCmd(processID, workDir, command string, port int, host string) tea.Cm
 			}
 		}
 
-		// Run through user's shell
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/zsh"
-		}
-
-		shellCmd := fmt.Sprintf("source ~/.zshrc 2>/dev/null; source ~/.zprofile 2>/dev/null; %s", cmdStr)
-		cmd := exec.Command(shell, "-c", shellCmd)
-		cmd.Env = os.Environ()
-
-		// Set working directory - use project dir if provided, otherwise cwd
-		if workDir != "" {
-			cmd.Dir = workDir
-		} else if cwd, err := os.Getwd(); err == nil {
-			cmd.Dir = cwd
-		}
+		cmd := shell.CreateCommand(shell.CommandConfig{
+			Settings: s,
+			Command:  cmdStr,
+			WorkDir:  workDir,
+		})
 
 		return runCmdWithPipes(processID, cmd, ch)
 	}

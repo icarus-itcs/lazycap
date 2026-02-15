@@ -779,7 +779,7 @@ func handleRunCommand(ctx *mcpContext, args map[string]interface{}) (interface{}
 	}
 
 	// Run command
-	output, err := cap.RunShellCommand(workDir, command)
+	output, err := cap.RunShellCommand(ctx.settings, workDir, command)
 	if err != nil {
 		return mcpContent(fmt.Sprintf("Command failed: %s\n\nOutput:\n%s", err.Error(), output)), nil
 	}

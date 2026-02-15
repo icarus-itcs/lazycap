@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/icarus-itcs/lazycap/internal/device"
+	"github.com/icarus-itcs/lazycap/internal/settings"
+	"github.com/icarus-itcs/lazycap/internal/shell"
 )
 
 // UpgradeInfo contains information about available upgrades
@@ -846,12 +848,14 @@ func KillPort(port int) bool {
 	return killed
 }
 
-// RunShellCommand runs a shell command in the specified directory and returns output
-func RunShellCommand(dir string, command string) (string, error) {
-	cmd := exec.Command("sh", "-c", command)
-	if dir != "" {
-		cmd.Dir = dir
-	}
+// RunShellCommand runs a shell command in the specified directory and returns output.
+// It uses the shell package for robust cross-platform command execution.
+func RunShellCommand(s *settings.Settings, dir string, command string) (string, error) {
+	cmd := shell.CreateCommand(shell.CommandConfig{
+		Settings: s,
+		Command:  command,
+		WorkDir:  dir,
+	})
 
 	output, err := cmd.CombinedOutput()
 	return string(output), err
