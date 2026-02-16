@@ -511,5 +511,5 @@ See [LICENSE](LICENSE) for details. Copyright (c) 2025 Icarus, Inc.
 ---
 
 <p align="center">
-  Made with care by <a href="https://icarus.inc">Icarus, Inc.</a>
+  Made with care by <a href="https://icarus.io">Icarus, Inc.</a>
 </p>
