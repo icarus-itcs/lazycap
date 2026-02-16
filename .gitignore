@@ -1,0 +1,41 @@
+# Compiled binaries
+/lazycap
+/bin/
+/cmd/test-stream/test-stream
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test and coverage output
+*.test
+*.out
+coverage.out
+coverage.html
+
+# GoReleaser
+/dist/
+
+# Air hot-reload
+/tmp/
+
+# Go workspace
+go.work
+go.work.sum
+
+# macOS
+.DS_Store
+._*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
